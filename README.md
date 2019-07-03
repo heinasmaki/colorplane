@@ -1,7 +1,7 @@
 # colorplane
 Spin model simulator for plane colorings.
 
-The source code in the folder "src" is subject to the GCC 3.0 License.
+The source code in the folder "src" is subject to the GPL 3.0 License.
 
 The associated materials in the folder "materials" are licensed under a
 Creative Commons Attribution-ShareAlike 4.0 International License.
