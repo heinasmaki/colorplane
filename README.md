@@ -8,8 +8,6 @@ Creative Commons Attribution-ShareAlike 4.0 International License.
 
 These include especially the paper 
 
-plane_coloring.pdf (c) by Sami Heinäsmäki
-
-and the lattices in the subfolder "lattices".
+plane_coloring.pdf and the lattices in the subfolder "lattices".
 
 See the file "materials/License_CC" for the full text of the license.
