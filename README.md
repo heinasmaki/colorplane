@@ -11,4 +11,4 @@ These include especially the
 
 and the lattices in the subfolder "lattices"
 
-See the file "License_CC" for the full text of the license.
+See the file "materials/License_CC" for the full text of the license.
