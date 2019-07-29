@@ -8,6 +8,8 @@ The code is interactive, and you can look at the input file examples in the "mat
 
 The source code in the folder "src" requires a fortran compiler. The makefile defaults to gfortran, which is recommended. The code has been tested with GCC versions 5.4 and 7.4. The choice of the fortran compiler is important as it affects the pseudorandom number generator (prng). The code uses the fortran built-in prng, which in GCC 5.4 is the Mersenne twister, and in GCC 7.4 xorshift1024*. Both generators are of high quality and give consistent results, but if you use some other fortran compiler, beware of the prng issue. All the results found in the "materials" subfolder have been obtained with GCC 5.4.
 
+You should think this software as a reference implementation: I would actually like you to write your own simulator which could use different choices of the simulated annealing algorithm. This would provide more information and could even give some important insight into the problem.
+
 The source code in the folder "src" is subject to the GPL 3.0 License. See the license file in the main folder for the full text.
 
 The associated materials in the folder "materials" are licensed under a
