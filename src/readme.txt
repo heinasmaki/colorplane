@@ -6,7 +6,7 @@ pseudorandom number generator (prng). The code uses the fortran built-in prng, w
 and in GCC 7.4 xorshift1024*. Both generators are of high quality and give consistent results, but if you use some other 
 fortran compiler, beware of the prng issue. 
 
-All the results found in the "materials" subfolder have been obtained with GCC 5.4.
+All the results found in the "colorplane/materials" subfolder have been obtained with GCC 5.4.
 
 The folder includes two auxiliary (GNU/Octave or Matlab) routines. They are used to compute the relative energies for lattice sites,
 which can then be displayed as heat maps, similar to what is seen in the paper. They also produce the energy curves,
