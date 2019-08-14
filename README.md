@@ -6,13 +6,6 @@ The principles and methods used by the code are described in the associated pape
 
 The code is interactive, and you can look at the input file examples in the "materials/inputs" subfolder for reasonable parameters. 
 
-You should think this software as a reference implementation: I would actually like you to write your own simulator which could use different choices of the simulated annealing algorithm. This would provide more information and could even give some important insight into the problem.
+You should regard this software as a reference implementation: I would actually like you to write your own simulator which could use different choices of the simulated annealing algorithm. This would provide more information and could even give some important insight into the problem.
 
-The source code in the folder "src" is subject to the GPL 3.0 License. See the license file in the main folder for the full text.
-
-The associated materials in the folder "materials" are licensed under a
-Creative Commons Attribution-ShareAlike 4.0 International License.
-
-These include especially the paper and the lattices in the subfolder "lattices".
-
-You can access [the full text](materials/License_CC) of the CC license.
+The source code in the folder "src" is subject to the GPL 3.0 License. See the license file in the main folder for the full text. The associated materials in the folder "materials" are licensed under a Creative Commons Attribution-ShareAlike 4.0 International License. These include especially the paper and the lattices in the subfolder "lattices". The material includes the input files used in the paper, as well as the lattices shown there. You can access [the full text](materials/License_CC) of the CC license.
