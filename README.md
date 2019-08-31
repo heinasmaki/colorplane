@@ -2,7 +2,7 @@
 
 Spin model simulator for plane colorings. Computes the ground state of a multicomponent spin system in a lattice, where the number of equal spin values unit distance apart is minimized. When interpreting spin values as colors, the output is an approximation to a [plane coloring](https://en.wikipedia.org/wiki/Hadwiger%E2%80%93Nelson_problem). 
 
-The principles and methods used by the code are described in the associated paper [Lattice approach to plane colorings](https://arxiv.org/abs/1908.03880).
+The principles and methods used by the code are described in the associated paper [Lattice approach to plane colorings](https://arxiv.org/abs/1908.03880v2).
 
 The code is interactive, and you can look at the input file examples in the "materials/inputs" subfolder for reasonable parameters. 
 
