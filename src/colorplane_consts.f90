@@ -17,10 +17,13 @@
 !   along with Colorplane.  If not, see <https://www.gnu.org/licenses/>.
 !
 module colorplane_consts
+  use colorplane_build_info, only: spin_kind
   implicit none
 
-  ! Signed 16-bit storage supports every advertised color, including 255.
-  integer, parameter :: ip = selected_int_kind (4)
+  ! Build-selected signed storage: 16 bits for GNU by default, 32 for NVIDIA
+  ! to avoid unsupported 16-bit conversions in its OpenMP device compiler.
+  ! Both representations support every advertised color, including 255.
+  integer, parameter :: ip = spin_kind
 
   ! sp is the standard real, typically 32 bit
   integer, parameter :: sp  = kind(1.0)

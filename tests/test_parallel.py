@@ -158,7 +158,7 @@ class ParallelTests(unittest.TestCase):
         inputs=[(s,site,sweep,q) for s in (0,2147483646) for site in (1,10001)
                 # Large q is a unit-test input to force rejection attempts in
                 # the generic RNG helper; physical models still allow 2..255.
-                for sweep in (1,2**32+5) for q in (2,3,7,255,1500000001)]
+                for sweep in (1,2**32+5) for q in (*range(2,256),1500000001)]
         lines=self.probe('moves','\n'.join(' '.join(map(str,row)) for row in inputs)+'\n')
         for line,args in zip(lines,inputs):
             candidate,u=line.split()
@@ -225,6 +225,11 @@ class ParallelTests(unittest.TestCase):
         for order in ('typewriter','random'):
             self.run_model(order+'full','cpu',steps=5,sweeps=9,offset=1,threads=4,order=order)
             self.run_model(order+'split','blocked',steps=2,sweeps=9,offset=1,order=order)
+            # Older 32-bit list-directed output pads each value to 12 columns.
+            # Check that the reader accepts those wider rows without truncation.
+            path=self.directory/(order+'split.lat')
+            rows=[list(map(int,row.split())) for row in path.read_text().splitlines()]
+            path.write_text('\n'.join(''.join(f'{value:12d}' for value in row) for row in rows)+'\n')
             self.run_model(order+'split','cpu',steps=3,sweeps=9,offset=1,threads=2,seed=None,order=order)
             self.assertEqual((self.directory/(order+'full.lat')).read_bytes(),
                              (self.directory/(order+'split-res.lat')).read_bytes())
@@ -292,6 +297,7 @@ if __name__=='__main__':
     parser.add_argument('--compiler',default=os.environ.get('FC','gfortran'))
     parser.add_argument('--flags')
     parser.add_argument('--compiler-kind',choices=['auto','gnu','nvhpc'],default='auto')
+    parser.add_argument('--spin-bits',type=int,choices=[16,32])
     parser.add_argument('--require-gpu',action='store_true',help='Fail unless a real offload device is exercised')
     args,remaining=parser.parse_known_args()
     config=compiler_config(args.compiler,args.compiler_kind)
@@ -300,7 +306,8 @@ if __name__=='__main__':
                     '-O1 -g -std=f2008 -fcheck=all -ftrapv -ffpe-trap=invalid,zero,overflow')
     REQUIRE_GPU=args.require_gpu
     EXE=build(args.compiler,args.flags,ROOT/'build'/'parallel-tests'/
-              ('colorplane.exe' if os.name=='nt' else 'colorplane'),openmp=True,compiler_kind=config['kind'])
+              ('colorplane.exe' if os.name=='nt' else 'colorplane'),openmp=True,compiler_kind=config['kind'],
+              spin_bits=args.spin_bits)
     PROBE=EXE.parent/('parallel_probe.exe' if os.name=='nt' else 'parallel_probe')
     subprocess.run([args.compiler,*args.flags.split(),*config['openmp_flags'],'-I',str(EXE.parent),
                     config['module_flag'],str(EXE.parent),

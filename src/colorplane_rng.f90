@@ -8,6 +8,7 @@ module colorplane_rng
   private
   public :: philox4x32, random_move
   integer(int64), parameter :: mask32=int(z'FFFFFFFF',int64), mask16=65535_int64
+  integer(int64), parameter :: limb_base=65536_int64, word_base=4294967296_int64
 contains
   pure subroutine multiply32(a,b,hi,lo)
     !$omp declare target
@@ -16,9 +17,12 @@ contains
     integer(int64) :: lower,upper
     ! Two 16x32 products avoid undefined signed 64-bit integer overflow.
     lower=iand(a,mask16)*b
-    upper=shiftr(a,16)*b+shiftr(lower,16)
-    lo=ior(shiftl(iand(upper,mask16),16),iand(lower,mask16))
-    hi=shiftr(upper,16)
+    ! All operands are nonnegative. Power-of-two integer division/multiplication
+    ! is exactly the logical shift here, without SHIFTR/SHIFTL device intrinsics
+    ! missing from some NVFORTRAN versions. The low fields are disjoint.
+    upper=(a/limb_base)*b+lower/limb_base
+    lo=iand(upper,mask16)*limb_base+iand(lower,mask16)
+    hi=upper/limb_base
   end subroutine
 
   pure subroutine philox4x32(counter,key,result)
@@ -48,16 +52,19 @@ contains
     integer(int64) :: counter(4),key(2),words(4),limit,n
     n=int(q-1,int64)
     limit=(4294967296_int64/n)*n
-    key=[iand(seed,mask32),shiftr(seed,32)]
-    counter=[int(site,int64),iand(sweep,mask32),shiftr(sweep,32),0_int64]
+    key=[iand(seed,mask32),seed/word_base]
+    counter=[int(site,int64),iand(sweep,mask32),sweep/word_base,0_int64]
     do
        call philox4x32(counter,key,words)
        if (words(1)<limit) exit
        counter(4)=counter(4)+1
     end do
     ! Rejection sampling gives an unbiased choice among q-1 alternative colors.
-    candidate=1+int(modulo(words(1),n))
+    ! Nonnegative word and positive divisor: exact remainder without MODULO's
+    ! unsupported pgf90_i8modulov_i8 device runtime on some NVIDIA compilers.
+    ! The product is at most words(1), so all intermediates fit in int64.
+    candidate=1+int(words(1)-(words(1)/n)*n)
     ! Exactly representable 53-bit uniform in [0,1), independent of proposal word.
-    u=(real(words(3),dp)*2097152.0_dp+real(shiftr(words(4),11),dp))*2.0_dp**(-53)
+    u=(real(words(3),dp)*2097152.0_dp+real(words(4)/2048_int64,dp))*2.0_dp**(-53)
   end subroutine
 end module

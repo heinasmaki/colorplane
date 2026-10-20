@@ -259,7 +259,9 @@ contains
     integer :: row(data%Nx+1)
     character(len=:), allocatable :: line
     ! Each row must have exactly Nx integers, without wrapping into the next row.
-    allocate(character(len=8*(data%Nx+1)) :: line)
+    ! Allow list-directed files from both 16- and 32-bit builds as well as our
+    ! compact explicit output format (older 32-bit output uses wider padding).
+    allocate(character(len=16*(data%Nx+1)) :: line)
     open(newunit=u,file=path,status='old',iostat=ios)
     if (ios /= 0) error stop 'Cannot open starting lattice'
     do j=1,data%Ny
@@ -288,7 +290,7 @@ contains
     integer :: u,j
     open(newunit=u,file=path,status='replace')
     do j=1,data%Ny
-       write(u,*) spins(j+data%d,1+data%d:data%Nx+data%d)
+       write(u,'(*(i0,1x))') spins(j+data%d,1+data%d:data%Nx+data%d)
     end do
     close(u)
   end subroutine
@@ -360,6 +362,7 @@ contains
     write(u,'(a)') 'compiler='//compiler_version()
     write(u,'(a)') 'compiler_options='//compiler_options()
     write(u,'(a)') 'backend='//trim(data%backend)
+    write(u,'(a,i0)') 'spin_storage_bits=',bit_size(0_ip)
     write(u,'(a)') 'update_algorithm='//trim(algorithm_family(data))
     if (data%backend=='serial') then
        write(u,'(a)') 'order_scope=sites'

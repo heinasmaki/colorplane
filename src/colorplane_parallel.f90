@@ -234,7 +234,9 @@ contains
     take=delta<=0
     if (.not. take) take=u<exp(-delta/t)
     if (take) then
-       s(center)=int(candidate,ip)
+       ! Same-kind assignment on NVIDIA's 32-bit build needs no INT(...,2)
+       ! runtime helper on the device. GNU's compact build narrows 1..255 safely.
+       s(center)=candidate
        accepted=accepted+1
        if (delta/=0) changed=changed+1
     end if
