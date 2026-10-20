@@ -48,6 +48,9 @@ module colorplane_consts
   ! Datatype basedata holds the basic information about the problem.
   ! Defaults are overwritten once input data is processed.
   type :: basedata
+     character(len=16) :: backend = 'serial'
+     integer :: threads = 0, max_threads = 1, device = -1, tile_size = 0, color_groups = 0
+     integer(kind=8) :: completed_sweeps = 0
      integer(kind=8) :: seed = 1
      logical :: seed_given = .false.
      character(len=1024) :: initial_file = ''

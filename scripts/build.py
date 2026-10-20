@@ -10,11 +10,22 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def build(compiler="gfortran", flags="-O3", output=None):
+def compiler_config(compiler,kind="auto"):
+    if kind=="auto":
+        kind="nvhpc" if "nvfortran" in Path(compiler).name.lower() else "gnu"
+    if kind not in ("gnu","nvhpc"):
+        raise ValueError("Compiler kind must be gnu or nvhpc")
+    return {"kind":kind,"module_flag":"-module" if kind=="nvhpc" else "-J",
+            "openmp_flags":["-mp=gpu"] if kind=="nvhpc" else ["-fopenmp"]}
+
+
+def build(compiler="gfortran", flags="-O3", output=None, openmp=False,compiler_kind="auto"):
+    config=compiler_config(compiler,compiler_kind)
     output = Path(output or ROOT / "build" / ("colorplane.exe" if os.name == "nt" else "colorplane")).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     sources = [ROOT / "src" / (name + ".f90") for name in
-               ("colorplane_consts", "colorplane_utils", "colorplane_reliability", "colorplane")]
+               ("colorplane_consts", "colorplane_utils", "colorplane_reliability", "colorplane_rng",
+                "colorplane_parallel", "colorplane")]
     hashes = {p.relative_to(ROOT).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
     try:
         revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
@@ -26,10 +37,12 @@ def build(compiler="gfortran", flags="-O3", output=None):
     generated.write_text("module colorplane_build_info\n  implicit none\n"
                          "  character(len=*), parameter :: build_identity = &\n"
                          f"    '{identity}'\nend module\n", encoding="utf-8")
-    command = [compiler, *shlex.split(flags), "-J", str(output.parent), "-I", str(output.parent),
+    command = [compiler, *shlex.split(flags), *(config["openmp_flags"] if openmp else []),
+               config["module_flag"], str(output.parent), "-I", str(output.parent),
                str(generated), *map(str, sources), "-o", str(output)]
     subprocess.run(command, cwd=output.parent, check=True)
     manifest = {"revision": revision, "source_sha256": hashes, "build_identity": identity,
+                "compiler_kind":config["kind"],
                 "command": command, "executable_sha256": hashlib.sha256(output.read_bytes()).hexdigest()}
     output.with_suffix(".build.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return output
@@ -40,5 +53,7 @@ if __name__ == "__main__":
     parser.add_argument("--compiler", default=os.environ.get("FC", "gfortran"))
     parser.add_argument("--flags", default="-O3")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--openmp", action="store_true", help="Enable CPU parallelism and compiled GPU targets")
+    parser.add_argument("--compiler-kind",choices=["auto","gnu","nvhpc"],default="auto")
     args = parser.parse_args()
-    print(build(args.compiler, args.flags, args.output))
+    print(build(args.compiler, args.flags, args.output, args.openmp,args.compiler_kind))

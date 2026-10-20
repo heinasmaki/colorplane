@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"q": 3, "nx": 128, "ny": 128, "spacing": 0.05, "steps": 10, "cooling": 0.9, "sweeps": 20, "backend": "blocked"},
+    {"q": 3, "nx": 128, "ny": 128, "spacing": 0.05, "steps": 10, "cooling": 0.9, "sweeps": 20, "backend": "cpu", "threads": 4},
+    {"q": 3, "nx": 128, "ny": 128, "spacing": 0.05, "steps": 10, "cooling": 0.9, "sweeps": 20, "backend": "cpu", "threads": 4, "order": "random"}
+  ]
+}

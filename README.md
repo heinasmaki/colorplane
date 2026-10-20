@@ -16,6 +16,20 @@ python scripts/build.py
 python tests/test_reliability.py
 ```
 
+For multicore execution:
+
+```sh
+python scripts/build.py --openmp
+build/colorplane --backend cpu --threads 8 --seed 123 < materials/inputs/q2-10-1.inp
+python tests/test_parallel.py
+```
+
+For NVIDIA/Linux GPU execution, independent-tile scheduling, correctness tests,
+benchmarks, and cluster submission, see [Parallel spin updates](docs/parallelism.md).
+The default `serial` mode preserves the original update schedule. `blocked`
+provides a single-thread reference for `cpu` and `gpu` modes. GPU execution
+requires an offload-enabled compiler/runtime and refuses silent CPU fallback.
+
 The executable is `build/colorplane` (`build/colorplane.exe` on Windows).
 Alternatively, `make -C src` retains the old `src/colorplane` location. Override
 the compiler with `--compiler /path/to/gfortran` or `FC=...`, and compiler flags
@@ -36,8 +50,9 @@ runs. Repeatability requires the same executable/compiler, options, input,
 and starting configuration. Compiler RNG implementations can differ, so seeds
 are not a promise of bitwise agreement across compilers or versions.
 
-Optional controls are `--order random` (a new permutation of all sites each
-sweep), `--kernel hat`, `--reheat-every N`, and `--reheat-factor F` (default 2).
+Optional controls are `--order random` (a new permutation of sites in serial
+mode, or of independent tile colors in parallel modes), `--kernel hat`,
+`--reheat-every N`, and `--reheat-factor F` (default 2).
 Defaults retain typewriter order, the cosine kernel, and geometric cooling.
 Reheating multiplies the scheduled temperature before global stages N+1,
 2N+1, etc.; it does not restore a discarded configuration. The hat kernel is
@@ -59,7 +74,7 @@ before the first Monte Carlo move are saved for every run.
 | `.rng-initial` | RNG state immediately before the first sweep |
 | `.metrics.csv` | Measurements of the fixed configuration after each temperature stage |
 | `.sum` | Human-readable parameters and exact stage energies |
-| `.dat` | Historical sweep-time estimates, explicitly labeled as such |
+| `.dat` | Serial sweep-time estimates; parallel modes use `.metrics.csv` instead |
 | `.ngb` | Optional final local-energy map, normalized by the full interaction stencil |
 | `.meta` | Seed, build/compiler identity, parameters, and measurement conventions |
 | `.state` | Full-precision restart parameters, RNG state, and lattice consistency checksum |

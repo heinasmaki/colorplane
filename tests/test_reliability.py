@@ -111,6 +111,12 @@ class ReliabilityTests(unittest.TestCase):
         self.assertTrue(all(1<=v<=255 for v in values))
         self.assertTrue(any(v>127 for v in values))
 
+    def test_plain_build_has_blocked_reference_and_rejects_parallel_requests(self):
+        self.run_model('blocked',args=['--backend','blocked'])
+        for backend in ('cpu','gpu','target-host'):
+            proc=self.run_model(backend,args=['--backend',backend],ok=False)
+            self.assertIn('OpenMP build',proc.stderr)
+
     def test_invalid_schedule_spacing_and_missing_input(self):
         self.run_model(steps=5,sweeps=4,offset=1,ok=False)
         self.run_model(spacing=0.5,ok=False)
