@@ -74,6 +74,9 @@ def run_ensemble(exe, config, seeds, output):
             command = [str(exe), "--seed", str(seed), "--order", case.get("order", "typewriter"),
                        "--kernel", case.get("kernel", "cosine"), "--reheat-every",
                        str(case.get("reheat_every", 0)), "--reheat-factor", str(case.get("reheat_factor", 2.0))]
+            command += ["--backend", case.get("backend", "serial")]
+            if "threads" in case:
+                command += ["--threads", str(case["threads"])]
             initial = initial_pattern(case, directory / "pattern.lat")
             if "initial" in case:
                 if initial:

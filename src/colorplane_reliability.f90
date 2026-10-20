@@ -15,6 +15,10 @@ contains
 
   subroutine usage()
     print '(a)', 'Usage: colorplane [options] < input.inp'
+    print '(a)', '--backend serial|blocked|cpu|gpu|target-host  Execution backend'
+    print '(a)', '--threads N              OpenMP CPU threads (0: respect OpenMP environment)'
+    print '(a)', 'blocked is the serial reference for the independent-tile schedule.'
+    print '(a)', 'target-host tests target directives on CPU; it is not GPU execution.'
     print '(a)', '--seed N                 Nonnegative integer seed (default 1)'
     print '(a)', '--initial FILE           Start from a supplied lattice with a fresh RNG'
     print '(a)', '--order typewriter|random  Visit each site once per sweep'
@@ -35,6 +39,15 @@ contains
        call get_command_argument(k+1, val)
        ios = 0
        select case(trim(arg))
+       case('--backend')
+          select case(trim(val))
+          case('serial','blocked','cpu','gpu','target-host')
+             data%backend=val(1:len(data%backend))
+          case default
+             error stop 'Unknown backend'
+          end select
+       case('--threads')
+          read(val,*,iostat=ios) data%threads
        case('--seed')
           read(val,*,iostat=ios) data%seed
           data%seed_given = .true.
@@ -61,6 +74,8 @@ contains
   subroutine validate_input(data)
     type(basedata), intent(in) :: data
     integer(int64) :: last, loops
+    if (data%threads<0) error stop 'Negative thread count'
+    if (int(data%completed_steps,int64)+data%tmax>huge(1)) error stop 'Stage index overflow'
     if (data%q < 2 .or. data%q > 255) error stop 'Colors must be in 2..255'
     if (min(data%Nx,data%Ny) < 2) error stop 'Lattice dimensions must exceed 1'
     ! Coarse spacings >= 1/2 allow self-interactions, incompatible with spin-delta updates.
@@ -75,6 +90,11 @@ contains
     if (loops > huge(1)) error stop 'Too many sweeps for indexing'
     if (int(data%Nx,int64)*data%Ny > huge(1)) error stop 'Too many sites for indexing'
     if (1.0_dp/data%a > 10000.0_dp) error stop 'Interaction stencil too large'
+    if (data%backend/='serial') then
+       last=2_int64*ceiling(2.0_dp+1.0_dp/data%a)
+       if ((int(data%Nx,int64)+last)*(int(data%Ny,int64)+last)>huge(1)) &
+            error stop 'Padded lattice too large for parallel indexing'
+    end if
     if (data%seed < 0 .or. data%seed > 2147483646_int64) error stop 'Seed must lie in 0..2147483646'
     if (data%reheat_every < 0) error stop 'Negative reheat interval'
     if (.not. ieee_is_finite(data%reheat_factor)) error stop 'Nonfinite reheating factor'
@@ -123,13 +143,15 @@ contains
     integer, allocatable :: state(:)
     character(len=4096) :: line
     character(len=16) :: kernel
+    character(len=32) :: family
+    integer(int64) :: stages,expected_sweeps
     inquire(file=trim(data%outfil)//'.state',exist=exists)
     if (.not. exists) error stop 'Restart needs .state; use --initial FILE for legacy lattices'
     if (data%seed_given .or. len_trim(data%initial_file)>0) error stop 'Seed/initial conflicts with restart'
     open(newunit=u,file=trim(data%outfil)//'.state',status='old')
     read(u,'(a)',iostat=ios) line
     call state_ok(ios)
-    if (line /= 'COLORPLANE_STATE_1') error stop 'Unknown checkpoint format'
+    if (line /= 'COLORPLANE_STATE_2') error stop 'Old/unknown checkpoint; use --initial with a new root'
     read(u,'(a)',iostat=ios) line
     call state_ok(ios)
     if (line /= compiler_version()) error stop 'Checkpoint compiler mismatch'
@@ -163,6 +185,12 @@ contains
     call state_ok(ios)
     read(u,*,iostat=ios) data%checkpoint_hash
     call state_ok(ios)
+    read(u,*,iostat=ios) family,data%completed_sweeps
+    call state_ok(ios)
+    if (family/=algorithm_family(data)) error stop 'Checkpoint update algorithm mismatch'
+    stages=int(data%completed_steps,int64)
+    expected_sweeps=stages*data%ctmax-(stages*(stages+1)/2)*data%offset
+    if (data%completed_sweeps/=expected_sweeps) error stop 'Checkpoint sweep counter mismatch'
     close(u)
     call random_seed(put=state)
   end subroutine
@@ -176,7 +204,7 @@ contains
     allocate(state(n))
     call random_seed(get=state)
     open(newunit=u,file=trim(data%outfil)//'.state',status='replace')
-    write(u,'(a)') 'COLORPLANE_STATE_1'
+    write(u,'(a)') 'COLORPLANE_STATE_2'
     write(u,'(a)') compiler_version()
     write(u,'(a)') compiler_options()
     write(u,'(a)') build_identity
@@ -187,8 +215,16 @@ contains
     write(u,*) n
     write(u,*) state
     write(u,*) lattice_hash(spins,data)
+    write(u,*) algorithm_family(data),' ',data%completed_sweeps
     close(u)
   end subroutine
+
+  function algorithm_family(data) result(family)
+    type(basedata), intent(in) :: data
+    character(len=32) :: family
+    family='blocked-philox4x32-v1'
+    if (data%backend=='serial') family='legacy-intrinsic-v1'
+  end function
 
   function lattice_hash(spins,data) result(hash)
     integer(ip), intent(in) :: spins(:,:)
@@ -323,6 +359,18 @@ contains
     write(u,'(a)') 'build_identity='//build_identity
     write(u,'(a)') 'compiler='//compiler_version()
     write(u,'(a)') 'compiler_options='//compiler_options()
+    write(u,'(a)') 'backend='//trim(data%backend)
+    write(u,'(a)') 'update_algorithm='//trim(algorithm_family(data))
+    if (data%backend=='serial') then
+       write(u,'(a)') 'order_scope=sites'
+    else
+       write(u,'(a)') 'order_scope=tile_colors'
+    end if
+    write(u,'(a,i0)') 'openmp_max_threads=',data%max_threads
+    write(u,'(a,i0)') 'openmp_device=',data%device
+    write(u,'(a,i0)') 'tile_side_sites=',data%tile_size
+    write(u,'(a,i0)') 'independent_color_groups=',data%color_groups
+    write(u,'(a,i0)') 'completed_sweeps_before_run=',data%completed_sweeps
     write(u,'(a,i0)') 'seed=',data%seed
     write(u,'(a,i0)') 'q=',data%q
     write(u,'(a,i0)') 'nx=',data%Nx

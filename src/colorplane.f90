@@ -20,16 +20,21 @@ program colorplane
   use colorplane_consts
   use colorplane_utils
   use colorplane_reliability
+  use colorplane_parallel
   use, intrinsic :: iso_fortran_env, only: int64
   implicit none
   type(basedata) :: lattice
-  integer(ip), allocatable :: spins(:,:)
+  type(parallel_plan) :: plan
+  integer(ip), allocatable, target :: spins(:,:)
+  integer(ip), pointer :: flat(:)
+  integer :: device
+  logical :: parallel_mode
   integer, allocatable :: sites(:)
   integer :: i,j,k,ct,cx,cy,id,is,js,pos,site,metrics,history,interior_sites
   integer(int64) :: attempts,accepted,changed,neutral
   real(dp) :: T,e_old,e_new,r,p,err,mean,interior,zero_fraction,maximum,denom
   integer(ip) :: s_old,s_new,s_ref,s_out
-  real :: start,finish
+  real(dp) :: start,finish
   character(len=1024) :: arg
   logical :: state_exists
 
@@ -41,6 +46,8 @@ program colorplane
   call collect_input(lattice)
   call read_options(lattice)
   call validate_input(lattice)
+  call configure_backend(lattice,device)
+  parallel_mode=lattice%backend/='serial'
   call check_if_restart(lattice)
   inquire(file=trim(lattice%outfil)//'.state',exist=state_exists)
   if (state_exists .and. .not. lattice%restart) error stop 'Incomplete checkpoint: .lat/.sum missing'
@@ -48,7 +55,7 @@ program colorplane
   call validate_input(lattice)
   call finalize_input(lattice)
   allocate(spins(lattice%Ny+2*lattice%d,lattice%Nx+2*lattice%d))
-  allocate(sites(lattice%Nx*lattice%Ny))
+  if (.not. parallel_mode) allocate(sites(lattice%Nx*lattice%Ny))
   spins=0
   if (lattice%restart) then
      call load_lattice(trim(lattice%outfil)//'.lat',spins,lattice)
@@ -64,24 +71,43 @@ program colorplane
         call create_initial_spins(lattice,spins)
      end if
   end if
+  flat(1:size(spins))=>spins
+  if (parallel_mode) then
+     call make_plan(lattice,plan)
+     lattice%tile_size=plan%tile
+     lattice%color_groups=plan%groups
+     call parallel_begin(flat,plan)
+     print '(a,i0,a,i0)', 'Independent tiles: side=',plan%tile,', color groups=',plan%groups
+  end if
   ! Record the generator state immediately before the first Monte Carlo move.
   call save_rng(lattice)
   call save_lattice(trim(lattice%outfil)//'.initial.lat',spins,lattice)
   call write_metadata(lattice)
-  sites=[(i,i=1,size(sites))]
+  if (.not. parallel_mode) sites=[(i,i=1,size(sites))]
   open(newunit=metrics,file=trim(lattice%outfil)//'.metrics.csv',status='replace')
   write(metrics,'(a)') 'step,temperature,energy,interior_energy,interior_sites,zero_fraction,max_local_energy,'// &
        'acceptance_rate,energy_change_acceptance_rate,zero_energy_acceptance_rate'
   open(newunit=history,file=trim(lattice%outfil)//'.dat',status='replace')
-  write(history,'(a)') '# Sweep-time pre-update energy estimate; use .metrics.csv for fixed configurations'
-  call cpu_time(start)
+  if (parallel_mode) then
+     write(history,'(a)') '# Parallel mode: fixed-configuration samples are in .metrics.csv; no per-sweep transfers'
+  else
+     write(history,'(a)') '# Sweep-time pre-update energy estimate; use .metrics.csv for fixed configurations'
+  end if
+  start=wall_seconds()
   do k=1,lattice%tmax
      T=lattice%tvec(k)
      attempts=0
      accepted=0
      changed=0
      neutral=0
+     if (parallel_mode) call parallel_reset(plan)
      do ct=1,lattice%ctmax-lattice%offset*(lattice%completed_steps+k)
+        if (parallel_mode) then
+           if (lattice%random_order) call shuffle_sites(plan%order)
+           call parallel_sweep(flat,plan,lattice,T)
+           lattice%completed_sweeps=lattice%completed_sweeps+1
+           cycle
+        end if
         if (lattice%random_order) call shuffle_sites(sites)
         err=0
         do pos=1,size(sites)
@@ -121,9 +147,17 @@ program colorplane
            spins(cy,cx)=s_out
            err=err+e_old
         end do
+        lattice%completed_sweeps=lattice%completed_sweeps+1
         write(history,'(es25.17)') err/(real(size(sites),dp)*sum(lattice%dval))
      end do
-     call measure(spins,lattice,mean,interior,zero_fraction,maximum,interior_sites)
+     if (parallel_mode) then
+        call parallel_measure(flat,plan,lattice,mean,interior,zero_fraction,maximum,interior_sites,accepted,changed)
+        attempts=int(lattice%Nx,int64)*lattice%Ny* &
+             (lattice%ctmax-lattice%offset*(lattice%completed_steps+k))
+        neutral=accepted-changed
+     else
+        call measure(spins,lattice,mean,interior,zero_fraction,maximum,interior_sites)
+     end if
      lattice%errvec(k)=mean
      denom=real(attempts,dp)
      write(metrics,'(i0,3(a,es25.17),a,i0,5(a,es25.17))') &
@@ -133,9 +167,17 @@ program colorplane
   end do
   close(metrics)
   close(history)
-  call cpu_time(finish)
+  if (parallel_mode) call parallel_finish(flat,plan)
+  finish=wall_seconds()
   call write_summary(lattice,lattice%tmax,finish-start)
   call save_lattice(trim(lattice%outfil)//'.lat',spins,lattice)
-  if (lattice%writeneigh) call print_neighs(spins,lattice)
+  if (lattice%writeneigh) then
+     if (parallel_mode) then
+        call parallel_map(plan,lattice)
+     else
+        call print_neighs(spins,lattice)
+     end if
+  end if
   call write_checkpoint(lattice,spins)
+  print '(a,f16.6)', 'Annealing wall seconds: ',finish-start
 end program

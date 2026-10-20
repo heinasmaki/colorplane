@@ -1,0 +1,201 @@
+# Parallel spin updates
+
+The original serial algorithm remains the default. The independent-tile engine
+adds site-level parallelism without simultaneously changing interacting spins.
+It is the same Fortran source on CPU and OpenMP target devices.
+
+## Multicore CPU
+
+From the repository root, with Python 3.9+ and gfortran on PATH:
+
+```sh
+python scripts/build.py --openmp --output build/cpu/colorplane
+build/cpu/colorplane --backend cpu --threads 8 --seed 123 < materials/inputs/q2-10-1.inp
+```
+
+On Windows use `build/cpu/colorplane.exe` as the output/executable name. Compiler
+runtime libraries must be on PATH or next to the executable. With Make,
+`make -C src OPENMP=1` enables OpenMP. Existing input files and physical
+parameters are retained. All modes use double precision for energies.
+
+PowerShell uses a pipeline instead of shell input redirection:
+
+```powershell
+python scripts/build.py --openmp --output build/cpu/colorplane.exe
+Get-Content materials/inputs/q2-10-1.inp | & ./build/cpu/colorplane.exe --backend cpu --threads 8 --seed 123
+```
+
+| Backend | Update schedule | Execution |
+| --- | --- | --- |
+| `serial` | Original site-by-site order | One CPU thread; default |
+| `blocked` | Independent tiles | One CPU thread; parallel algorithm reference |
+| `cpu` | Independent tiles | OpenMP CPU threads |
+| `gpu` | Independent tiles | Non-host OpenMP device; refuses CPU fallback |
+| `target-host` | Independent tiles | OpenMP target constructs on the host, for testing |
+
+`--threads N` selects the requested CPU thread count. Zero or omission respects
+the OpenMP environment. `OMP_NUM_THREADS`, `OMP_PROC_BIND`, `OMP_PLACES`, and
+scheduler allocations still matter. Metadata records the maximum team size,
+not a guarantee that an external thread limit permits that many workers. The
+ensemble runner launches processes sequentially to avoid oversubscription.
+
+## NVIDIA GPU on Linux or an HPC cluster
+
+An ordinary Windows gfortran build does **not** generate GPU code. The intended
+GPU deployment is Linux with a compatible compiler, driver, and GPU allocation.
+Do not run a production calculation on a cluster login node.
+
+### NVIDIA HPC SDK
+
+Load your site's NVIDIA HPC SDK module (its name/version is site-specific):
+
+```sh
+python scripts/build.py --compiler nvfortran --openmp --flags="-O3" --output build/nvidia/colorplane
+OMP_TARGET_OFFLOAD=MANDATORY build/nvidia/colorplane --backend gpu --seed 123 < materials/inputs/q2-10-1.inp
+```
+
+The helper recognizes `nvfortran` and uses `-mp=gpu` and `-module`. If a wrapper
+hides the compiler name, pass `--compiler-kind nvhpc`. NVIDIA documents GPU
+plus CPU execution with `-mp=gpu`, targeting V100 and later GPUs. When building
+without the target GPU present, supply its architecture, for example
+`--flags="-O3 -gpu=cc80"` for an A100. Adapt this to the site's hardware and
+supported compiler versions. See the
+[NVIDIA user guide](https://docs.nvidia.com/hpc-sdk/compilers/hpc-compilers-user-guide/index.html)
+and [compiler reference](https://docs.nvidia.com/hpc-sdk/compilers/hpc-compilers-ref-guide/).
+
+### GNU NVIDIA offload
+
+Alternatively, use gfortran configured with its NVIDIA offload compiler,
+device libraries, and NVPTX tools:
+
+```sh
+python scripts/build.py --openmp --flags="-O3 -foffload=nvptx-none" --output build/nvidia-gcc/colorplane
+OMP_TARGET_OFFLOAD=MANDATORY build/nvidia-gcc/colorplane --backend gpu --seed 123 < materials/inputs/q2-10-1.inp
+```
+
+`gfortran -v` reports configured offload targets. Device architectures and
+driver requirements depend on the compiler version; consult the
+[GCC OpenMP options](https://gcc.gnu.org/onlinedocs/gcc/OpenMP-and-OpenACC-Options.html)
+and [NVIDIA target documentation](https://gcc.gnu.org/onlinedocs/libgomp/nvptx.html).
+Other compiler-supported GPU targets are not a validated deployment of this change.
+
+`OMP_DEFAULT_DEVICE` selects a device. GPU mode checks the device count and
+executes a probe that must report non-host execution. `target-host` is a
+separate diagnostic mode: host-fallback tests never count as GPU validation.
+
+`examples/slurm-nvidia.sh` illustrates requesting one GPU and running one
+simulation. Adapt its account/partition/resource flags and module setup before
+submitting. Supply executable and input paths. It creates a new working
+directory to protect results and does not submit itself.
+
+## Why the batches have no interacting spins
+
+Adjacency alone is insufficient: the interaction has a finite smoothing width,
+and separated tiles can still interact. A checkerboard leaves unit-distance
+interactions inside a batch. The engine uses **all retained nonzero stencil weights**.
+
+For integer stencil offsets `dx,dy`, define
+
+```
+B = min over interacting offsets of max(abs(dx), abs(dy))
+R = max over interacting offsets of max(abs(dx), abs(dy))
+P = ceil(R/B) + 1
+color(x,y) = (floor(x/B) mod P) + P * (floor(y/B) mod P)
+```
+
+Coordinates here are zero-based. Tiles have `B` sites on each side. Every
+within-tile displacement has maximum coordinate magnitude at most `B-1`,
+so those sites do not interact. Distinct same-color tiles have a separation
+of at least `(P-1)*B+1` sites in one coordinate, exceeding `R`. Every site
+belongs to one group and is visited once per sweep. Barriers separate groups.
+
+For the cosine kernel at `a=0.0125`, the tile side is 56 sites and there are
+9 groups. An 800x800 lattice exposes roughly 70,000 sites per batch. Coarse
+lattices or another kernel can need more groups; small/thin domains may offer
+little parallel work.
+
+Each spin reads fixed neighbors and writes only its own value and counters.
+Within-group updates commute and retain the single-site Metropolis rule.
+Ordered composition preserves the same fixed-temperature target distribution.
+The schedule and random generator **differ from the original serial trajectory**;
+annealing outcomes can differ, so compare energy quality with ensembles too.
+
+In parallel modes `--order typewriter` means fixed tile-color order, and
+`--order random` permutes colors before each sweep. Metadata records
+`order_scope=tile_colors` rather than implying a random order among concurrent sites.
+
+## Random numbers and restarts
+
+Philox4x32-10 is keyed by the seed and the counter
+`(site, sweep_low32, sweep_high32, rejection_attempt)`, not by the worker thread.
+Proposal colors use rejection sampling to avoid modulo bias; Metropolis
+decisions use a 53-bit uniform. Products use 16-bit pieces to avoid signed
+integer overflow. See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
+
+With the same executable, seed, and color ordering, CPU trajectories and
+diagnostics are independent of thread count. GPU devices use the same random
+words, but floating-point or `exp` differences between devices/compilers can
+eventually change a decision. Representative CPU/GPU agreement is tested when
+hardware is available, not promised for all calculations.
+
+Checkpoint format 2 saves the sweep counter and algorithm family alongside
+the existing RNG state, parameters, and lattice checksum. `blocked`, `cpu`,
+`gpu`, and `target-host` share a family: the same executable can resume between
+them or change CPU thread count. A legacy `serial` trajectory cannot be resumed
+as a parallel trajectory. Existing build/compiler and parameter checks still
+apply. Old checkpoints require a new run with `--initial` and a new output root.
+
+## Data movement, diagnostics, and timing
+
+The padded lattice, offsets, weights, site lists, and per-site counters remain
+in device memory throughout annealing. Color kernels are synchronous. Stage
+measurements compute local energies on the backend, then transfer energy and
+integer-counter arrays for deterministic host aggregation. The spin lattice
+is downloaded once at completion. The final energy array also supplies `.ngb`.
+
+Parallel `.dat` files contain an explanatory header only: host sweep traces
+would force per-sweep transfers. Fixed-configuration energies remain in
+`.metrics.csv`; `.lat`, `.ngb`, and checkpoints remain available.
+
+Timing uses elapsed wall time. Printed annealing time includes sweeps, stage
+diagnostics, and final device download, but excludes initialization and the
+first upload. The benchmark also records complete process wall time.
+
+## Validation and benchmarks
+
+```sh
+python tests/test_reliability.py
+python tests/test_parallel.py
+python scripts/benchmark_parallel.py --exe build/cpu/colorplane --threads 1 2 4 8 --repeats 3 --output experiments/cpu-scaling
+python scripts/ensemble.py --exe build/cpu/colorplane --config experiments.parallel.json --seeds 1 2 3 --output experiments/parallel-quality
+```
+
+The parallel suite checks every interaction edge in several lattice colorings,
+published RNG known answers, an independent Python Monte Carlo implementation,
+final energy maps, CPU thread invariance, random color order, exact restarts,
+and rejection of GPU fallback. It also exercises target constructs on the host.
+The separate real-GPU test is skipped unless requested; then absence of a
+device is a failure. Run it **inside a GPU allocation** before production:
+
+```sh
+OMP_TARGET_OFFLOAD=MANDATORY python tests/test_parallel.py --compiler nvfortran --flags="-O2 -Mbounds" --require-gpu
+```
+
+For GNU offload, replace compiler/flags with
+`--compiler gfortran --flags="-O2 -foffload=nvptx-none -fcheck=all"`.
+Specify GPU architecture flags where necessary. Test builds use
+`build/parallel-tests`, separate from production executables.
+
+Benchmarks retain executable/source hashes, environment, parameters, timings,
+energies, and final-state agreement with the blocked reference. CPU mismatches
+fail. Add `--gpu` with an offload-enabled executable and GPU allocation. GPU
+agreement is recorded rather than assumed. Use enough work/repetitions to
+amortize startup and kernel launches. These example budgets are not convergence
+claims; optimization quality and finite-size/refinement studies still matter.
+
+Local validation used GNU Fortran on Windows. CPU and host-target tests passed;
+a 192x192, `a=0.05`, 30-sweep benchmark measured about 4x shorter annealing time
+with 8 CPU threads versus the blocked reference (two repeats, identical final
+states). No compatible NVIDIA GPU/compiler was available locally, so actual
+GPU execution and NVIDIA HPC SDK compilation remain unverified here. The
+real-GPU suite is the next validation gate.

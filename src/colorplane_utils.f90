@@ -479,7 +479,7 @@ contains
     !
     type(basedata), intent(in) :: data
     integer, intent(in) :: k
-    real, intent(in) :: elapsed_time
+    real(kind=dp), intent(in) :: elapsed_time
 
     integer, parameter :: output = 22
     character(len=8) :: date
