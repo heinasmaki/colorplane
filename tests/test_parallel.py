@@ -158,7 +158,7 @@ class ParallelTests(unittest.TestCase):
         inputs=[(s,site,sweep,q) for s in (0,2147483646) for site in (1,10001)
                 # Large q is a unit-test input to force rejection attempts in
                 # the generic RNG helper; physical models still allow 2..255.
-                for sweep in (1,2**32+5) for q in (2,3,7,255,1500000001)]
+                for sweep in (1,2**32+5) for q in (*range(2,256),1500000001)]
         lines=self.probe('moves','\n'.join(' '.join(map(str,row)) for row in inputs)+'\n')
         for line,args in zip(lines,inputs):
             candidate,u=line.split()

@@ -74,7 +74,9 @@ record the storage width, which is included in the checkpoint build identity.
 The Philox implementation uses exact division/multiplication by powers of two
 on nonnegative integers instead of `SHIFTR`/`SHIFTL`/`IOR` calls. This bypasses
 intrinsic-resolution failures reported with older NVIDIA device compilers,
-while retaining the published random-number words exactly. Rebuild with the
+while retaining the published random-number words exactly. Proposal remainders
+also use exact integer division/subtraction to avoid NVIDIA's unsupported
+64-bit `MODULO` device runtime (`pgf90_i8modulov_i8`). Rebuild with the
 same command shown above after updating these sources; no special user flags
 are required for these compatibility fixes.
 

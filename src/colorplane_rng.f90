@@ -60,7 +60,10 @@ contains
        counter(4)=counter(4)+1
     end do
     ! Rejection sampling gives an unbiased choice among q-1 alternative colors.
-    candidate=1+int(modulo(words(1),n))
+    ! Nonnegative word and positive divisor: exact remainder without MODULO's
+    ! unsupported pgf90_i8modulov_i8 device runtime on some NVIDIA compilers.
+    ! The product is at most words(1), so all intermediates fit in int64.
+    candidate=1+int(words(1)-(words(1)/n)*n)
     ! Exactly representable 53-bit uniform in [0,1), independent of proposal word.
     u=(real(words(3),dp)*2097152.0_dp+real(words(4)/2048_int64,dp))*2.0_dp**(-53)
   end subroutine
