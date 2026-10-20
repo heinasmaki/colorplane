@@ -18,12 +18,9 @@
 !
 module colorplane_consts
   implicit none
- 
-  ! For the spin lattice we use the shortest possible integers.
-  ! One-byte integers are good for spin values 1 - 255
-  ! (zero value is reserved for other use). 
-  ! If this is not enough, modify here the accuracy ip
-  integer, parameter :: ip = selected_int_kind (1)  
+
+  ! Signed 16-bit storage supports every advertised color, including 255.
+  integer, parameter :: ip = selected_int_kind (4)
 
   ! sp is the standard real, typically 32 bit
   integer, parameter :: sp  = kind(1.0)
@@ -48,32 +45,40 @@ module colorplane_consts
   ! This can optionally be set at initialization.
   integer, parameter, public :: offset_default = 0
 
-  ! Datatype basedata holds the basic information about the problem. 
-  ! Defaults are overwritten once input data is processed.  
+  ! Datatype basedata holds the basic information about the problem.
+  ! Defaults are overwritten once input data is processed.
   type :: basedata
+     integer(kind=8) :: seed = 1
+     logical :: seed_given = .false.
+     character(len=1024) :: initial_file = ''
+     character(len=16) :: kernel = 'cosine'
+     logical :: random_order = .false.
+     integer :: reheat_every = 0, completed_steps = 0
+     real(kind=dp) :: reheat_factor = 2.0_dp, restart_temperature = 0.0_dp
+     integer(kind=8) :: checkpoint_hash = -1
      ! number of spins = colors:
      integer(kind=ip) :: q
-     
+
      ! lattice dimensions (default is to use Nx = Ny):
      integer :: Nx, Ny
-     
+
      ! lattice spacing:
      real(kind=dp) :: a
-     
+
      ! max number of annealing steps
      integer :: tmax
-     
+
      ! reduce temperature at each annealing step by 0 < tscale < 1:
      real(kind=dp) :: tscale
-     
+
      ! number of update steps at constant temperature:
      integer :: ctmax
-     
+
      ! root name for output files; there will be outfil.sum for basic data,
      ! outfil.lat for the spin lattice itself, and optionally outfil.err for
      ! errors site by site
-     character(len=256) :: outfil
-     
+     character(len=1024) :: outfil
+
      ! number giving the maximum number of lattice points where the
      ! delta function interaction extends from any site
      integer :: d
@@ -99,7 +104,7 @@ module colorplane_consts
 
      ! minimum temperature in annealing
      real(kind=dp) :: t_min
-     
+
      ! vector to hold the error = average number of parallel spins
      ! at distance 1 away, one value for each annealing step
      real(kind=dp), dimension(:), allocatable :: errvec
@@ -113,7 +118,7 @@ module colorplane_consts
 
      ! offset value, can optionally be set to non default value
      integer :: offset = offset_default
-     
+
   end type basedata
 
 end module colorplane_consts

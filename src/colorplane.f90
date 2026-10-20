@@ -19,157 +19,123 @@
 program colorplane
   use colorplane_consts
   use colorplane_utils
+  use colorplane_reliability
+  use, intrinsic :: iso_fortran_env, only: int64
   implicit none
-
   type(basedata) :: lattice
-  integer(kind=ip), dimension(:,:), allocatable :: spins
-  integer :: i, j, k, ct, m, cx, cy, id, is, js, nloops, loopind
-  real(kind=dp) :: delsum, T, e_old, e_new, r, p, err
-  integer(kind=ip) :: s_old, s_new, s_ref, s_out
-  real :: start, finish  ! for timing
-  integer, parameter :: latfil = 33, errfil = 99
-  real(kind=dp), dimension(:), allocatable :: cumerr
+  integer(ip), allocatable :: spins(:,:)
+  integer, allocatable :: sites(:)
+  integer :: i,j,k,ct,cx,cy,id,is,js,pos,site,metrics,history,interior_sites
+  integer(int64) :: attempts,accepted,changed,neutral
+  real(dp) :: T,e_old,e_new,r,p,err,mean,interior,zero_fraction,maximum,denom
+  integer(ip) :: s_old,s_new,s_ref,s_out
+  real :: start,finish
+  character(len=1024) :: arg
+  logical :: state_exists
 
-  call collect_input (lattice)
-  call check_if_restart (lattice)
-  call finalize_input (lattice)
-  
-  ! Initialize spins: an outer padding of zeros (never updated)
-  ! which is needed for the fixed-range energy calculation to work,
-  ! and the inner "actual" Ny x Nx lattice of random integers 1...q
-  ! either randomly or from a previous file
-  allocate (spins(lattice%Ny + 2*lattice%d, lattice%Nx + 2*lattice%d))
-  spins = 0
-  call create_initial_spins ( lattice, spins )
-
-  ! Finally, if we are doing a restart, change output name:
-  if (lattice%restart) lattice%outfil = trim(lattice%outfil)//'-res'
-    
-  ! the average number of dist=1 equal spins at every step
-  ! can be helpful in determining if the number of constant T
-  ! update loops is high enough:
-  nloops = updatenum (lattice%tmax, lattice%ctmax, lattice%offset)
-  allocate( cumerr(nloops) )
-
-  ! Start the actual annealing sequence, traverse the spin lattice in
-  ! typewriter order
-  call cpu_time ( start )
-  k       = 0
-  delsum  = sum (lattice%dval)
-  loopind = 0
-  
-  do while (k < lattice%tmax)
-
-     k = k + 1
-     T = lattice%tvec(k)
-
-     ! constant temperature MC loop
-     ct = 0
-
-     ! perform more constant T loops in the beginning, where
-     ! the temperature is high, gradually shorten the below
-     ! loop according to parameter offset
-     do while (ct < (lattice%ctmax - lattice%offset * k) )
-
-        loopind = loopind + 1
-        ct      = ct + 1
-        err     = 0.0_dp  ! average site error
-        m       = 0       ! site counter
-   
-        ! lattice update loops
-        do i = 1, lattice%Nx
-           do j = 1, lattice%Ny
-
-              ! We look at spin at the center of a subarray,
-              ! whose upper-left corner is at (j,i).
-              ! x and y coordinates of the center spin:
-              cx    = i + lattice%d
-              cy    = j + lattice%d
-              s_old = spins(cy, cx)
-
-              ! randomly generate s_new /= s_old:
-              s_new = newspin (s_old, lattice%q)
-              ! for q>~6 below is marginally faster:
-              !call random_number (r)
-              !ind   = 1 + floor( (lattice%q - 1) * r )
-              !s_new = lattice%spinmat(s_old, ind)
-
-              ! Compute site energies by looping over the nonzero
-              ! values of the delta function in the sublattice
-              ! around the site (cy, cx)          
-              m     = m + 1
-              e_old = 0.0_dp
-              e_new = 0.0_dp
-              do id = 1, lattice%dnum
-                 is    = i + lattice%xind(id) - 1
-                 js    = j + lattice%yind(id) - 1
-                 s_ref = spins (js, is)
-                 if (s_ref == s_old) e_old = e_old + lattice%dval(id)
-                 if (s_ref == s_new) e_new = e_new + lattice%dval(id)
-              end do
-
-              ! Metropolis update of the spin
-              s_out = s_old
-              if (e_new < e_old) then
-                 s_out = s_new
-              else
-                 p = exp(-(e_new - e_old) / T)
-                 call random_number (r)
-                 if (r < p) s_out = s_new
-              end if
-
-              spins(cy, cx) = s_out
-
-              ! Cumulative average energy per lattice site
-              err = err * (m-1)/real(m) + e_old/real(m)
-
+  call get_command_argument(1,arg)
+  if (arg=='--help') then
+     call usage()
+     stop
+  end if
+  call collect_input(lattice)
+  call read_options(lattice)
+  call validate_input(lattice)
+  call check_if_restart(lattice)
+  inquire(file=trim(lattice%outfil)//'.state',exist=state_exists)
+  if (state_exists .and. .not. lattice%restart) error stop 'Incomplete checkpoint: .lat/.sum missing'
+  if (lattice%restart) call read_checkpoint(lattice)
+  call validate_input(lattice)
+  call finalize_input(lattice)
+  allocate(spins(lattice%Ny+2*lattice%d,lattice%Nx+2*lattice%d))
+  allocate(sites(lattice%Nx*lattice%Ny))
+  spins=0
+  if (lattice%restart) then
+     call load_lattice(trim(lattice%outfil)//'.lat',spins,lattice)
+     if (lattice_hash(spins,lattice)/=lattice%checkpoint_hash) error stop 'Checkpoint lattice checksum mismatch'
+     lattice%outfil=trim(lattice%outfil)//'-res'
+     call check_output_root(lattice)
+  else
+     call check_output_root(lattice)
+     call initialize_rng(lattice)
+     if (len_trim(lattice%initial_file)>0) then
+        call load_lattice(trim(lattice%initial_file),spins,lattice)
+     else
+        call create_initial_spins(lattice,spins)
+     end if
+  end if
+  ! Record the generator state immediately before the first Monte Carlo move.
+  call save_rng(lattice)
+  call save_lattice(trim(lattice%outfil)//'.initial.lat',spins,lattice)
+  call write_metadata(lattice)
+  sites=[(i,i=1,size(sites))]
+  open(newunit=metrics,file=trim(lattice%outfil)//'.metrics.csv',status='replace')
+  write(metrics,'(a)') 'step,temperature,energy,interior_energy,interior_sites,zero_fraction,max_local_energy,'// &
+       'acceptance_rate,energy_change_acceptance_rate,zero_energy_acceptance_rate'
+  open(newunit=history,file=trim(lattice%outfil)//'.dat',status='replace')
+  write(history,'(a)') '# Sweep-time pre-update energy estimate; use .metrics.csv for fixed configurations'
+  call cpu_time(start)
+  do k=1,lattice%tmax
+     T=lattice%tvec(k)
+     attempts=0
+     accepted=0
+     changed=0
+     neutral=0
+     do ct=1,lattice%ctmax-lattice%offset*(lattice%completed_steps+k)
+        if (lattice%random_order) call shuffle_sites(sites)
+        err=0
+        do pos=1,size(sites)
+           site=sites(pos)
+           i=1+(site-1)/lattice%Ny
+           j=1+mod(site-1,lattice%Ny)
+           cx=i+lattice%d
+           cy=j+lattice%d
+           s_old=spins(cy,cx)
+           s_new=newspin(s_old,lattice%q)
+           e_old=0
+           e_new=0
+           do id=1,lattice%dnum
+              is=i+lattice%xind(id)-1
+              js=j+lattice%yind(id)-1
+              s_ref=spins(js,is)
+              if (s_ref==s_old) e_old=e_old+lattice%dval(id)
+              if (s_ref==s_new) e_new=e_new+lattice%dval(id)
            end do
+           s_out=s_old
+           if (e_new<e_old) then
+              s_out=s_new
+           else
+              p=exp(-(e_new-e_old)/T)
+              call random_number(r)
+              if (r<p) s_out=s_new
+           end if
+           attempts=attempts+1
+           if (s_out/=s_old) then
+              accepted=accepted+1
+              if (e_new==e_old) then
+                 neutral=neutral+1
+              else
+                 changed=changed+1
+              end if
+           end if
+           spins(cy,cx)=s_out
+           err=err+e_old
         end do
-
-        ! dist=1 equal spin values = normalized energies
-        cumerr(loopind) = err / delsum
-
+        write(history,'(es25.17)') err/(real(size(sites),dp)*sum(lattice%dval))
      end do
-
-     ! print out ratio of parallel spins at dist = 1 at the end of
-     ! constant T update cycle
-     lattice%errvec(k) = cumerr(loopind)
-     write(*,'(a,i4,a,F15.12)') 'Average number of neighbours per site' // &
-          ' after step', k, ':', lattice%errvec(k)
-
+     call measure(spins,lattice,mean,interior,zero_fraction,maximum,interior_sites)
+     lattice%errvec(k)=mean
+     denom=real(attempts,dp)
+     write(metrics,'(i0,3(a,es25.17),a,i0,5(a,es25.17))') &
+          lattice%completed_steps+k,',',T,',',mean,',',interior, &
+          ',',interior_sites,',',zero_fraction,',',maximum,',',accepted/denom,',',changed/denom,',',neutral/denom
+     write(*,'(a,i0,a,es16.8)') 'Stage ',lattice%completed_steps+k,': exact energy = ',mean
   end do
-
-  call cpu_time ( finish )
-  write(*,'(/,a,F12.3,a)') 'Annealing time =', finish-start, ' seconds'
-
-  call write_summary (lattice, k, finish-start)
-
-  ! write out also the whole lattice, for creating a nice picture
-  ! use e.g. Octave: B = load ("outfil.lat"); imagesc (B)
-  open(latfil, file=trim(lattice%outfil)//'.lat', status='replace', & 
-       action='write', form='formatted')
-  
-  do j = 1 + lattice%d, lattice%Ny + lattice%d
-     write(latfil,*) (spins(j,i), i = 1+lattice%d, lattice%Nx + lattice%d)
-  end do
-  close (latfil)
-
-  ! If requested, write out numbers of dist=1 equals in a big file
-  if (lattice%writeneigh) call print_neighs (spins, lattice)
-
-  ! cumerr is also written into a big file:
-  open(errfil, file=trim(lattice%outfil)//'.dat', status='replace', & 
-       action='write', form='formatted')
-  do j = 1, nloops
-     write(errfil, *) cumerr(j)
-  end do
-  close(errfil)
-  
+  close(metrics)
+  close(history)
+  call cpu_time(finish)
+  call write_summary(lattice,lattice%tmax,finish-start)
+  call save_lattice(trim(lattice%outfil)//'.lat',spins,lattice)
+  if (lattice%writeneigh) call print_neighs(spins,lattice)
+  call write_checkpoint(lattice,spins)
 end program
-
-
-
-
-
-
-

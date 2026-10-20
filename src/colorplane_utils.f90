@@ -19,31 +19,32 @@
 module colorplane_utils
 
   use colorplane_consts
+  use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
   implicit none
-  
+
   public :: collect_input
   ! interactively collect input data from user
 
   public :: check_if_restart
   ! looks for previous output, if found, assumes a restart
-  
+
   public :: finalize_input
   ! precomputes data for the mc iteration based on input
 
   public :: create_initial_spins
   ! reads spins from previous output, or creates a new random set
-  
+
   private :: lattice_delta
   ! lattice delta function, approximation based on cosine
 
   private :: set_annealing_scheme
   ! determines the temperature values in annealing
-  
+
   public :: newspin
   ! returns a new spin different from old spin, based on random_number
 
   public :: updatenum
-  ! computes the total number of lattice updates 
+  ! computes the total number of lattice updates
 
   public :: print_neighs
   ! computes the the errors for all lattice sites and prints them
@@ -51,9 +52,9 @@ module colorplane_utils
   public :: write_summary
   ! Prints out a summary: temperature and probability that spins
   ! have equal values at distance 1 away from each other
-  
 
-contains 
+
+contains
 
   subroutine collect_input (lattice_data)
     !
@@ -65,25 +66,27 @@ contains
     write(*,'(/,a,/)') '             Welcome to COLORPLANE'
     write(*,'(a)') 'Simulated annealing of a fixed-range' // &
          ' interaction Potts model'
-	write(*,'(a)') 'Copyright (C) 2018 Sami Heinäsmäki'
-	write(*,'(a,/)') 'Colorplane is free software, see ' // &
-	'<https://www.gnu.org/licenses/>'
+    write(*,'(a)') 'Copyright (C) 2018 Sami Heinäsmäki'
+    write(*,'(a,/)') 'Colorplane is free software, see ' // &
+    '<https://www.gnu.org/licenses/>'
 
     not_complete = .true.
     do while (not_complete)
        write(*,'(/,a)') 'Give the number of colors, from 2 to 255'
        read(*,'(i3)',iostat=ierror) lattice_data%q
+       if (ierror < 0) error stop 'Unexpected end of input'
        if (ierror /= 0) then
           write(*,*) 'Could not read integer value, please redo...'
           cycle
-       end if       
-       if (lattice_data%q > 1) not_complete = .false.
+       end if
+       if (lattice_data%q > 1 .and. lattice_data%q <= 255) not_complete = .false.
     end do
 
     not_complete = .true.
     do while (not_complete)
        write(*,'(/,a)') 'Enter number of rows in a square lattice'
        read(*,'(i8)',iostat=ierror) lattice_data%Ny
+       if (ierror < 0) error stop 'Unexpected end of input'
        if (ierror /= 0) then
           write(*,*) 'Could not read integer value, please redo...'
           cycle
@@ -97,6 +100,7 @@ contains
     do while (not_complete)
        write(*,'(/,a)') 'Enter lattice spacing'
        read(*,*,iostat=ierror) lattice_data%a
+       if (ierror < 0) error stop 'Unexpected end of input'
        if (ierror /= 0) then
           write(*,*) 'Could not read real value, please redo...'
           cycle
@@ -108,6 +112,7 @@ contains
     do while (not_complete)
        write(*,'(/,a)') 'Enter max number of annealing steps'
        read(*,'(i6)',iostat=ierror) lattice_data%tmax
+       if (ierror < 0) error stop 'Unexpected end of input'
        if (ierror /= 0) then
           write(*,*) 'Could not read integer value, please redo...'
           cycle
@@ -120,6 +125,7 @@ contains
        write(*,'(/,a)') 'Enter temperature scaling between the'// &
             ' annealing steps, in interval (0,1)'
        read(*,*,iostat=ierror) lattice_data%tscale
+       if (ierror < 0) error stop 'Unexpected end of input'
        if (ierror /= 0) then
           write(*,*) 'Could not read real value, please redo...'
           cycle
@@ -133,19 +139,20 @@ contains
     do while (not_complete)
        write(*,'(/,a)') 'Enter number of update steps at constant temperature'
        read(*,'(i6)',iostat=ierror) lattice_data%ctmax
+       if (ierror < 0) error stop 'Unexpected end of input'
        if (ierror /= 0) then
           write(*,*) 'Could not read integer value, please redo...'
           cycle
        end if
        if (lattice_data%ctmax > 0) not_complete = .false.
     end do
-    
+
     write(*,'(/,a)') 'Enter a root name for output data;'
     write(*,'(a)')   'file with extension .sum contains basic output data,'
     write(*,'(a)')  'file with extension .lat contains the final lattice,'
     write(*,'(a)')  'and the optional file with extension .ngb contains'// &
          ' neighbours per site.'
-    read(*,*) lattice_data%outfil
+    read(*,'(a)') lattice_data%outfil
 
     write(*,'(/,a)') 'Print out number of neighbours for all sites? (y/N)'
     write(*,'(a)') 'Warning: output may be large!'
@@ -165,7 +172,8 @@ contains
             ' of constant temperature updates by ', offset_default, &
             ' at each time temperature is reduced, set new value'// &
             ' or empty to stick with default:'
-       read(*,'(i4)',iostat=ierror) lattice_data%offset 
+       read(*,'(i4)',iostat=ierror) lattice_data%offset
+       if (ierror < 0) error stop 'Unexpected end of input'
        if (ierror /= 0) then
           write(*,*) 'Could not read integer value, using default value.'
           lattice_data%offset = offset_default
@@ -173,7 +181,7 @@ contains
     end if
 
     write(*,*)
-           
+
   end subroutine collect_input
 
 
@@ -197,7 +205,7 @@ contains
     end if
 
   end subroutine check_if_restart
-  
+
 
   subroutine finalize_input (data)
     !
@@ -229,8 +237,8 @@ contains
     dc = 0
     do i = 1, m
        do j = 1, m
-          dist = sqrt (real((dd - i)**2) + real((dd - j)**2))
-          dist = lattice_delta(dist - 1.0_dp/data%a)
+          dist = sqrt (real(dd-i,dp)**2 + real(dd-j,dp)**2)
+          dist = lattice_delta(dist - 1.0_dp/data%a, data%kernel)
           dist = dist / data%a
           if (dist > del_min) then
              dc       = dc + 1
@@ -240,7 +248,7 @@ contains
           end if
        end do
     end do
-  
+
     ! delta function values and positions go in struct data:
     data%dnum = dc
     allocate ( data%dval(dc), data%xind(dc), data%yind(dc) )
@@ -255,22 +263,9 @@ contains
 
     ! The choice of the temperature values is given in its
     ! own subroutine; modify it if you feel to
+    if (dc == 0) error stop 'Empty interaction stencil'
     call set_annealing_scheme (data)
 
-    ! Alternative approach for spin update, currently not used:
-    ! Fill spinmat: a q x (q-1) array of spin values, so that row i
-    ! contains spin values 1...q, excluding i. During annealing,
-    ! randomly select from row j to produce new spin different from j
-    allocate( data%spinmat(data%q, data%q - 1) )
-    data%spinmat(1,:) = (/ (j, j = 2, data%q) /)
-    data%spinmat(data%q,:) = (/ (j, j = 1, data%q - 1) /)
-    if (data%q > 2) then
-       do i = 2, data%q - 1
-          data%spinmat(i,1:i-1) = (/ (j, j = 1, i-1) /)
-          data%spinmat(i,i:data%q - 1) = (/ (j, j = i+1, data%q) /)
-       end do
-    end if
-    
   end subroutine finalize_input
 
 
@@ -283,11 +278,11 @@ contains
     integer(kind=ip), dimension(:,:), intent(inout) :: SM
     integer, parameter :: oldlat = 51
     integer :: i, j
-    real(kind=sp) :: r
+    real(kind=dp) :: r
 
     if (data%restart) then
-       
-       open(oldlat, file=trim(data%outfil)//'.lat', status='old', & 
+
+       open(oldlat, file=trim(data%outfil)//'.lat', status='old', &
             action='read', form='formatted')
 
        do j = 1 + data%d, data%Ny + data%d
@@ -300,32 +295,34 @@ contains
 
     else
 
-       call random_seed ()
        do i = 1 + data%d, data%Nx + data%d
           do j = 1 + data%d, data%Ny + data%d
              call random_number (r)
-             SM(j, i) = 1 + floor(data%q * r)
+             SM(j, i) = int(1 + floor(data%q * r),ip)
           end do
        end do
-       
+
        write (*,'(/,a,/)') 'new random spins created...'
-       
+
   end if
 
   end subroutine create_initial_spins
 
 
-  function lattice_delta(r) result(phi)
+  function lattice_delta(r, kernel) result(phi)
     !
     ! Returns approximate for the lattice delta function
     !
     real(kind=dp), intent(in) :: r
+    character(len=*), intent(in) :: kernel
     real(kind=dp) :: pi, phi
 
     pi  = 3.1415926535897932_dp
     phi = 0.0_dp
 
-    if (abs(r) < 2.0_dp) then
+    if (kernel == 'hat') then
+       phi = max(0.0_dp, 1.0_dp - abs(r))
+    else if (abs(r) < 2.0_dp) then
        phi = .25_dp * (1 + cos (pi * r / 2.0_dp))
     end if
 
@@ -338,11 +335,9 @@ contains
     ! based on user input.
     !
     type(basedata), intent(inout) :: data
-    !real(kind=dp) :: logt1, step
-    real(kind=dp) :: prefac, tval, neigh
-    integer :: i, valid, ind
-    integer, parameter :: sumfil = 31, firstlines = 24
-    
+    real(kind=dp) :: prefac
+    integer :: i
+
     allocate( data%tvec(data%tmax) )
 
     ! In the thermally dominated case we expect that each site has
@@ -353,41 +348,21 @@ contains
     ! necessary: the simulation does not converge in the beginning.
     ! Therefore, this initial value is reduced by multiplying
     ! with a prefactor < 1
-    prefac = 0.1
-    
+    prefac = 0.1_dp
+
     ! A simple scaling scheme is employed here, there are
     ! alternatives in the literature but this is easy for
     ! the user to affect, as the scaling factor 0 < tscale < 1
     ! is queried at input
     if (data%restart) then
 
-       ! read initial T from previous sum file....
-       ! read the last line, the second number is the last
-       ! temperature of the previous run
-       open(sumfil, file=trim(data%outfil)//'.sum', status='old', & 
-            action='read', form='formatted')
-
-       do i = 1, firstlines
-          read (sumfil, *)
-       end do
-
-       ! now starts the part of file where there are three numbers
-       ! per row: index, temperature, and number of parallel spins
-       valid = 0
-       do while (valid == 0)
-          read(sumfil,'(i5,F18.8,F18.12)', iostat = valid) ind, tval, neigh
-          if (valid == 0) data%tvec(1) = tval
-       end do
-              
-       close (sumfil)
-
-       ! finally, scale one step down:
-       data%tvec(1) = data%tscale * data%tvec(1)
+       ! Full-precision checkpoint replaces parsing rounded human output.
+       data%tvec(1) = data%tscale * data%restart_temperature
 
        write (*,'(/,a,/)') 'initial temperature read from file...'
 
     else
-       
+
        data%tvec(1) = prefac * sum(data%dval) / data%q
 
     end if
@@ -397,57 +372,49 @@ contains
     do i = 2, data%tmax
        data%tvec(i) = data%tscale * data%tvec(i-1)
     end do
+    ! Use global step indices so split runs have the same schedule.
+    if (data%reheat_every > 0) then
+       do i = 1, data%tmax
+          if (mod(data%completed_steps+i-1, data%reheat_every) == 0 .and. &
+               data%completed_steps+i > 1) data%tvec(i:) = data%tvec(i:) * data%reheat_factor
+       end do
+    end if
+    if (any(data%tvec <= tiny(1.0_dp)) .or. any(.not. ieee_is_finite(data%tvec))) &
+         error stop 'Temperature out of range: shorten cooling schedule'
 
   end subroutine set_annealing_scheme
-    
-  
+
+
   function newspin (si, q) result(sf)
     !
     ! Returns sf /= si,  1 <= sf <= q
     !
     integer(kind=ip), intent(in) :: si, q
-    integer(kind=ip) :: sf, a, b
-    real(kind=sp) :: r
-
-    sf = si
-    
-    ! if si is either 1 or q, shift interval
-    a = max (1, 3-si)
-    b = 1 + q - a
-
-    if (si == q) b = b-1
-
-    do while (sf == si)
-
-       call random_number (r)   
-       sf = a + floor(b * r)
-
-    end do
+    integer(kind=ip) :: sf
+    real(kind=dp) :: r
+    call random_number(r)
+    sf = int(1 + floor(real(q-1,dp)*r), ip)
+    if (sf >= si) sf = sf + 1_ip
 
   end function newspin
 
-    
+
   function updatenum (Na, Nct, ofs) result (nloops)
     !
     ! Returns the total number of lattice updates
     !
     integer, intent(in) :: Na, Nct, ofs
-    integer :: nloops, i, term
-
-    term   = 1
-    nloops = 0
-    i      = 0
-
-    do while (term > 0 .and. i < Na)
-
-       i      = i + 1
-       term   = Nct - i * ofs
-       nloops = nloops + term
-
-    end do
+    integer :: nloops
+    integer(kind=selected_int_kind(18)) :: steps,total
+    steps=int(Na,kind(steps))
+    if (Na<1 .or. Nct<1 .or. ofs<0) error stop 'Invalid sweep schedule'
+    if (int(Nct,kind(steps))-steps*ofs<1) error stop 'Empty temperature stage'
+    total=steps*Nct - (steps*(steps+1)/2)*ofs
+    if (total>huge(nloops)) error stop 'Sweep count overflow'
+    nloops=int(total)
 
   end function updatenum
-  
+
 
   subroutine print_neighs (spins, data)
     !
@@ -456,20 +423,20 @@ contains
     !
     integer(kind=ip), dimension(:,:), intent(in) :: spins
     type(basedata), intent(in) :: data
-    
+
     integer(kind=ip) :: sc, ss
     integer :: i, j, cx, cy, is, js, k, id
     real(kind=dp) :: norm, err
     real(kind=dp), dimension(data%Nx) :: nvec
     integer, parameter :: chan = 55
 
-    open(chan, file=trim(data%outfil)//'.ngb', status='replace', & 
-       action='write', form='formatted') 
-    
-    ! Normalization factor is the sum of all 
+    open(chan, file=trim(data%outfil)//'.ngb', status='replace', &
+       action='write', form='formatted')
+
+    ! Normalization factor is the sum of all
     ! delta function values
     norm = sum (data%dval)
-    
+
     do j = 1, data%Ny
        do i = 1, data%Nx
 
@@ -477,7 +444,7 @@ contains
           ! the sublattice
           cx = i + data%d
           cy = j + data%d
-          
+
           ! spin at the center of a ns x ns sublattice,
           ! whose upper-left corner is at (j,i)
           sc = spins(cy, cx)
@@ -491,21 +458,21 @@ contains
              ss = spins (js, is)
              if (ss == sc) err = err + data%dval(id)
           end do
-          
+
           nvec(i) = err / norm
 
        end do
 
        ! write one line
        write (chan, *) (nvec(k), k = 1, data%Nx)
-       
+
     end do
 
     close (chan)
-                  
+
   end subroutine print_neighs
-  
- 
+
+
   subroutine write_summary (data, k, elapsed_time)
     !
     ! write out basic data to .sum file
@@ -513,35 +480,35 @@ contains
     type(basedata), intent(in) :: data
     integer, intent(in) :: k
     real, intent(in) :: elapsed_time
-    
+
     integer, parameter :: output = 22
     character(len=8) :: date
     character(len=10) :: time
     integer :: i
-    real :: xsize, ysize
+    real(kind=dp) :: xsize, ysize
 
     ! compute also the size of the lattice in unit distances,
     ! because this is essential for the coloring problem
-    xsize = data%a * real(data%Nx)
-    ysize = data%a * real(data%Ny)
-    
+    xsize = data%a * real(data%Nx,dp)
+    ysize = data%a * real(data%Ny,dp)
+
     call date_and_time(date,time)
 
     ! Open the output file and print the header:
 
-    open(output, file=trim(data%outfil)//'.sum', status='replace', & 
+    open(output, file=trim(data%outfil)//'.sum', status='replace', &
          action='write', form='formatted')
 
     write(output,'(54a1)') ('=', i=1,54)
     write(output,*) 'Summary of the COLORPLANE output:'
     write(output,'(54a1,/)') ('=', i=1,54)
-    
+
     write(output,*) 'COLORPLANE run on ', date(1:4),'-',date(5:6),'-', &
          date(7:8), ' at ', time(1:2),':',time(3:4)
 
     write(output,'(/,a,/)') 'The following input data was used:'
 
-    write(output,'(a,i2)')      'Number of spins (=colors):      ', data%q
+    write(output,'(a,i0)')      'Number of spins (=colors):      ', data%q
 
     write(output,'(a,i4,a,i4,a)') 'Lattice size:                   ', &
          data%Ny, ' x', data%Nx, ' lattice sites'
@@ -556,7 +523,7 @@ contains
     write(output,'(a,i4)')      'Number of updates at constant T:', data%ctmax
 
     write(output,'(a,f6.3)')   'Temperature scaling:            ', data%tscale
-    
+
     write(output,'(a,f12.2,/)') 'Elapsed time (seconds):     ', elapsed_time
 
     ! Write out the results by annealing step:
@@ -564,15 +531,15 @@ contains
     write(output,'(a)') 'Average number of parallel-spin neighbours,'
     write(output,'(a)') 'separated by unit distance:'
     write(output,'(54A1,/)') ('-', i=1,54)
-    
+
     write(output,'(a7,a16,a18,/)') 'step', 'temperature', 'parallel spins'
 
     do i=1,k
-       write(output,'(i5,F18.8,F18.12)') i, data%tvec(i), data%errvec(i) 
+       write(output,'(i8,2es25.17)') i, data%tvec(i), data%errvec(i)
     end do
 
     close(output)
 
   end subroutine write_summary
-    
+
 end module colorplane_utils

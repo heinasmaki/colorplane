@@ -1,4 +1,7 @@
-Compile the code by issuing "make".
+Compile the code by issuing "make" (requires Python 3.9+ and gfortran).
+See ../README.md for reproducible seeds, exact measurements, restart rules,
+ensemble experiments, and the regression tests. Existing paper outputs below
+describe the original implementation, not the new seeded runs.
 
 The code requires a fortran compiler. The makefile defaults to gfortran, which is recommended. 
 The code has been tested with GCC versions 5.4 and 7.4. The choice of the fortran compiler is important as it affects the 
