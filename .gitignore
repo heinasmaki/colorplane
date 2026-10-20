@@ -1,0 +1,9 @@
+build/
+__pycache__/
+*.o
+*.mod
+src/colorplane
+src/colorplane.exe
+src/colorplane_build_info.f90
+src/colorplane.build.json
+experiments/

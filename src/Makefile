@@ -1,14 +1,12 @@
-FCC = gfortran
-FFL = -O3 -c
+FC = gfortran
+FFLAGS ?= -O3
+PYTHON ?= python3
 
-colorplane : colorplane.o colorplane_utils.o colorplane_consts.o
-	$(FCC) -o colorplane colorplane.o colorplane_utils.o colorplane_consts.o
+.PHONY: all colorplane test
+all: colorplane
 
-colorplane.o : colorplane.f90 colorplane_utils.o colorplane_consts.o
-	$(FCC) $(FFL) colorplane.f90
+colorplane:
+	$(PYTHON) ../scripts/build.py --compiler "$(FC)" --flags="$(FFLAGS)" --output "$(CURDIR)/colorplane"
 
-colorplane_utils.o : colorplane_utils.f90 colorplane_consts.o
-	$(FCC) $(FFL) colorplane_utils.f90
-
-colorplane_consts.o: colorplane_consts.f90
-	$(FCC) $(FFL) colorplane_consts.f90
+test:
+	$(PYTHON) ../tests/test_reliability.py --compiler "$(FC)"

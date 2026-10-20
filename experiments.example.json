@@ -1,0 +1,11 @@
+{
+  "cases": [
+    {"q": 2, "nx": 40, "ny": 40, "spacing": 0.1, "steps": 10, "cooling": 0.9, "sweeps": 20},
+    {"q": 2, "nx": 80, "ny": 80, "spacing": 0.05, "steps": 10, "cooling": 0.9, "sweeps": 20},
+    {"q": 2, "nx": 80, "ny": 80, "spacing": 0.1, "steps": 10, "cooling": 0.9, "sweeps": 20},
+    {"q": 2, "nx": 40, "ny": 40, "spacing": 0.1, "steps": 10, "cooling": 0.9, "sweeps": 20, "order": "random"},
+    {"q": 2, "nx": 40, "ny": 40, "spacing": 0.1, "steps": 10, "cooling": 0.9, "sweeps": 20, "kernel": "hat"},
+    {"q": 2, "nx": 40, "ny": 40, "spacing": 0.1, "steps": 10, "cooling": 0.9, "sweeps": 20, "reheat_every": 5, "reheat_factor": 2},
+    {"q": 2, "nx": 40, "ny": 40, "spacing": 0.1, "steps": 10, "cooling": 0.9, "sweeps": 20, "pattern": "stripes", "angle": 30}
+  ]
+}
