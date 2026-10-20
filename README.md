@@ -115,7 +115,9 @@ within a run is not provided.
 
 Spacing must be in `(0,0.5)` to exclude self-interaction. Every temperature
 must have at least one sweep, and underflowing/overflowing temperature
-schedules are rejected. Signed 16-bit storage supports all 2–255 colors.
+schedules are rejected. GNU defaults to signed 16-bit spin storage; NVIDIA
+uses 32 bits to avoid an unsupported GPU conversion helper. Both support all
+2–255 colors. The build option `--spin-bits 32` also selects wider GNU storage.
 
 ## Repeated runs and comparison experiments
 
