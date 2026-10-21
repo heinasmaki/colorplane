@@ -191,20 +191,30 @@ input=$(realpath materials/inputs/gpu-smoke.inp)
 mkdir -p experiments
 work=$(mktemp -d experiments/gpu-smoke-XXXXXX)
 cd "$work"
-srun --ntasks=1 "$exe" --backend gpu --seed 123 < "$input"
+COLORPLANE_GPU_CHECKS=1 srun --ntasks=1 "$exe" --backend gpu --seed 123 < "$input"
 ```
 
 An error reported at `cuStreamSynchronize` identifies a failed kernel, not the
 precise memory access. If it persists, repeat in another fresh directory with:
 
 ```sh
-srun --ntasks=1 compute-sanitizer --tool memcheck --target-processes all --error-exitcode 99 "$exe" --backend gpu --seed 123 < "$input"
+COLORPLANE_GPU_CHECKS=1 srun --ntasks=1 compute-sanitizer --tool memcheck --target-processes all --error-exitcode 99 "$exe" --backend gpu --seed 123 < "$input"
 ```
 
 [NVIDIA Compute Sanitizer](https://docs.nvidia.com/compute-sanitizer/ComputeSanitizer/index.html)
-can report the invalid device access and source location. The update routine
-uses explicit-shape arrays and explicit scalar capture to avoid passing
-assumed-shape descriptors through the device call. Host plan construction also
+can report the invalid device access and source location. With
+`COLORPLANE_GPU_CHECKS=1`, three startup kernels read back the mapped lattice,
+site lists, and stencil into separate buffers for exact comparison with the
+host. Progress messages go to stderr and are flushed before each launch. A
+failure therefore distinguishes an input mapping problem from a later update
+failure. This check adds startup transfers and temporary host/device buffers;
+leave it unset for production timing.
+
+Upload, reset, update, energy measurement, and download all use explicit-shape
+array arguments and the same explicit map extents. The flattened lattice is
+contiguous throughout the host call chain, and input scalars passed to the
+device update routine use `VALUE`. This avoids mixing array-descriptor and
+raw-storage interfaces across persistent mappings. Host plan construction also
 checks that all stencil accesses lie within the padded lattice. These measures
 do not replace validation on a real GPU.
 

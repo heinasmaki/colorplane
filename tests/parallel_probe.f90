@@ -10,7 +10,7 @@ program parallel_probe
   type(basedata) :: data
   type(parallel_plan) :: plan
   integer(ip), allocatable, target :: spins(:,:)
-  integer(ip), pointer :: flat(:)
+  integer(ip), pointer, contiguous :: flat(:)
   integer(int64) :: counter(4),key(2),words(4),seed,sweep,accepted,changed
   integer :: ios,site,q,candidate,i,j,g,p,n,device,loops
   real(dp) :: u,t,mean,inside,zero,maximum

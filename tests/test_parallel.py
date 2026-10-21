@@ -283,6 +283,7 @@ class ParallelTests(unittest.TestCase):
     def test_real_gpu_matches_reference_and_restarts(self):
         if not REQUIRE_GPU:
             self.skipTest('Real GPU test requires --require-gpu and a GPU-offload build')
+        self.env['COLORPLANE_GPU_CHECKS']='1'
         # Match the reported production stencil (tile side 56) on a smaller
         # rectangular lattice, including partial tiles and padded boundaries.
         text='4 137 129 .0125\ncosine\n123 .2 1\n'
@@ -298,6 +299,16 @@ class ParallelTests(unittest.TestCase):
         self.run_model('split','gpu',steps=2)
         self.run_model('split','gpu',steps=3,seed=None)
         self.assertEqual((self.directory/'whole.lat').read_bytes(),(self.directory/'split-res.lat').read_bytes())
+
+    def test_target_mapping_readback_preserves_trajectory(self):
+        self.run_model('reference','blocked')
+        self.env['COLORPLANE_GPU_CHECKS']='1'
+        proc=self.run_model('checked','target-host')
+        for stage in ('reading mapped lattice','reading mapped site lists',
+                      'reading mapped stencil','all mapped inputs match host'):
+            self.assertIn('GPU check: '+stage,proc.stderr)
+        self.assertEqual((self.directory/'reference.lat').read_bytes(),(self.directory/'checked.lat').read_bytes())
+        self.assertEqual(self.rows('reference'),self.rows('checked'))
 
 
 if __name__=='__main__':
