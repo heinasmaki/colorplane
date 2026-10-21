@@ -180,6 +180,34 @@ first upload. The benchmark also records complete process wall time.
 
 ## Validation and benchmarks
 
+For a short V100 check, build with portable host instructions and device line
+information, then run inside a one-task GPU allocation from a fresh directory:
+
+```sh
+python scripts/build.py --compiler nvfortran --openmp --flags="-O2 -tp=px -gpu=cc70,lineinfo -g -traceback" --output build/nvidia/colorplane
+# Set absolute paths before changing into a fresh output directory.
+exe=$(realpath build/nvidia/colorplane)
+input=$(realpath materials/inputs/gpu-smoke.inp)
+mkdir -p experiments
+work=$(mktemp -d experiments/gpu-smoke-XXXXXX)
+cd "$work"
+srun --ntasks=1 "$exe" --backend gpu --seed 123 < "$input"
+```
+
+An error reported at `cuStreamSynchronize` identifies a failed kernel, not the
+precise memory access. If it persists, repeat in another fresh directory with:
+
+```sh
+srun --ntasks=1 compute-sanitizer --tool memcheck --target-processes all --error-exitcode 99 "$exe" --backend gpu --seed 123 < "$input"
+```
+
+[NVIDIA Compute Sanitizer](https://docs.nvidia.com/compute-sanitizer/ComputeSanitizer/index.html)
+can report the invalid device access and source location. The update routine
+uses explicit-shape arrays and explicit scalar capture to avoid passing
+assumed-shape descriptors through the device call. Host plan construction also
+checks that all stencil accesses lie within the padded lattice. These measures
+do not replace validation on a real GPU.
+
 ```sh
 python tests/test_reliability.py
 python tests/test_parallel.py

@@ -110,6 +110,11 @@ contains
        end do
     end do
     plan%offsets=dy+dx*plan%stride
+    ! Validate every possible stencil access once, before any device launch.
+    ! Offsets may reach padding, but never outside the flattened allocation.
+    if (minval(plan%centers)+minval(plan%offsets)<1 .or. &
+         maxval(plan%centers)+maxval(plan%offsets)> &
+         (data%Nx+2*data%d)*(data%Ny+2*data%d)) error stop 'Stencil access outside padded lattice'
     plan%weights=data%dval
     plan%order=[(g,g=1,plan%groups)]
     plan%accepted=0
@@ -177,43 +182,49 @@ contains
        first=plan%starts(g)
        last=plan%starts(g+1)-1
        if (last<first) cycle
-       call update_group(s,plan%centers,plan%sites,plan%offsets,plan%weights,plan%accepted,plan%changed, &
+       call update_group(size(s),size(plan%centers),size(plan%offsets), &
+            s,plan%centers,plan%sites,plan%offsets,plan%weights,plan%accepted,plan%changed, &
             first,last,int(data%q),data%seed,data%completed_sweeps+1,temperature, &
             plan%target_mode,plan%threaded,plan%device)
     end do
   end subroutine
 
-  subroutine update_group(s,centers,sites,offsets,weights,accepted,changed,first,last,q,seed,sweep,t, &
+  subroutine update_group(ns,np,nk,s,centers,sites,offsets,weights,accepted,changed,first,last,q,seed,sweep,t, &
        target_mode,threaded,device)
-    integer(ip), intent(inout) :: s(:)
-    integer, intent(in) :: centers(:),sites(:),offsets(:),first,last,q,device
-    real(dp), intent(in) :: weights(:),t
-    integer(int64), intent(inout) :: accepted(:),changed(:)
+    integer, intent(in) :: ns,np,nk,first,last,q,device
+    integer(ip), intent(inout) :: s(ns)
+    integer, intent(in) :: centers(np),sites(np),offsets(nk)
+    real(dp), intent(in) :: weights(nk),t
+    integer(int64), intent(inout) :: accepted(np),changed(np)
     integer(int64), intent(in) :: seed,sweep
     logical, intent(in) :: target_mode,threaded
     integer :: p
     if (target_mode) then
        !$omp target teams distribute parallel do device(device) &
-       !$omp& map(alloc:s,centers,sites,offsets,weights,accepted,changed)
+       !$omp& map(alloc:s(1:ns),centers(1:np),sites(1:np),offsets(1:nk),weights(1:nk), &
+       !$omp& accepted(1:np),changed(1:np)) firstprivate(ns,nk,q,seed,sweep,t,first,last)
        do p=first,last
-          call advance_site(s,centers(p),sites(p),offsets,weights,q,seed,sweep,t,accepted(p),changed(p))
+          call advance_site(ns,nk,s,centers(p),sites(p),offsets,weights,q,seed,sweep,t,accepted(p),changed(p))
        end do
        !$omp end target teams distribute parallel do
     else
        !$omp parallel do if(threaded) schedule(static)
        do p=first,last
-          call advance_site(s,centers(p),sites(p),offsets,weights,q,seed,sweep,t,accepted(p),changed(p))
+          call advance_site(ns,nk,s,centers(p),sites(p),offsets,weights,q,seed,sweep,t,accepted(p),changed(p))
        end do
        !$omp end parallel do
     end if
     ! Implicit barriers separate colors; interacting spins are never in flight together.
   end subroutine
 
-  pure subroutine advance_site(s,center,site,offsets,weights,q,seed,sweep,t,accepted,changed)
+  pure subroutine advance_site(ns,nk,s,center,site,offsets,weights,q,seed,sweep,t,accepted,changed)
     !$omp declare target
-    integer(ip), intent(inout) :: s(:)
-    integer, intent(in) :: center,site,offsets(:),q
-    real(dp), intent(in) :: weights(:),t
+    ! Explicit-shape arguments avoid descriptor construction/passing inside the
+    ! offloaded loop, especially with older NVIDIA OpenMP device compilers.
+    integer, intent(in) :: ns,nk,center,site,q
+    integer(ip), intent(inout) :: s(ns)
+    integer, intent(in) :: offsets(nk)
+    real(dp), intent(in) :: weights(nk),t
     integer(int64), intent(in) :: seed,sweep
     integer(int64), intent(inout) :: accepted,changed
     integer :: candidate,k
@@ -225,7 +236,7 @@ contains
     if (candidate>=old) candidate=candidate+1
     eold=0
     enew=0
-    do k=1,size(offsets)
+    do k=1,nk
        neighbor=s(center+offsets(k))
        if (neighbor==old) eold=eold+weights(k)
        if (neighbor==candidate) enew=enew+weights(k)

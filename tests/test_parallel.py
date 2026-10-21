@@ -283,6 +283,14 @@ class ParallelTests(unittest.TestCase):
     def test_real_gpu_matches_reference_and_restarts(self):
         if not REQUIRE_GPU:
             self.skipTest('Real GPU test requires --require-gpu and a GPU-offload build')
+        # Match the reported production stencil (tile side 56) on a smaller
+        # rectangular lattice, including partial tiles and padded boundaries.
+        text='4 137 129 .0125\ncosine\n123 .2 1\n'
+        reference=self.probe('sweep',text,'blocked')
+        actual=self.probe('sweep',text,'gpu')
+        self.assertEqual(actual[1:],reference[1:])
+        self.assertEqual(actual[0].split()[1:],reference[0].split()[1:])
+        self.assertAlmostEqual(float(actual[0].split()[0]),float(reference[0].split()[0]),places=13)
         self.run_model('reference','blocked')
         self.run_model('gpu','gpu')
         self.assertEqual((self.directory/'gpu.lat').read_bytes(),(self.directory/'reference.lat').read_bytes())
