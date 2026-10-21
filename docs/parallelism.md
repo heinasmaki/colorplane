@@ -229,6 +229,13 @@ The parallel suite checks every interaction edge in several lattice colorings,
 published RNG known answers, an independent Python Monte Carlo implementation,
 final energy maps, CPU thread invariance, random color order, exact restarts,
 and rejection of GPU fallback. It also exercises target constructs on the host.
+Cross-backend lattice comparisons remain exact, as do stage numbers, site
+counts, temperatures, zero fractions, and acceptance rates. Energy diagnostics
+and local energy maps allow only double-precision rounding differences
+(`rel_tol=1e-13`, `abs_tol=1e-14`); missing interior regions must agree as NaN.
+This avoids treating differences in compiler-generated floating-point
+arithmetic as trajectory failures. Checkpoint replay within a backend is still
+checked exactly.
 The separate real-GPU test is skipped unless requested; then absence of a
 device is a failure. Run it **inside a GPU allocation** before production:
 

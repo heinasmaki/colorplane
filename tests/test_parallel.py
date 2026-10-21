@@ -138,6 +138,57 @@ class ParallelTests(unittest.TestCase):
         with (self.directory/(root+'.metrics.csv')).open() as source:
             return list(csv.DictReader(source))
 
+    def assert_metrics_match(self,actual,expected):
+        # Different host/target code generation can round energy arithmetic
+        # differently even for identical spins. Keep discrete outcomes exact.
+        energy_fields={'energy','interior_energy','max_local_energy'}
+        self.assertEqual(len(actual),len(expected))
+        for stage,(row,wanted) in enumerate(zip(actual,expected),1):
+            self.assertEqual(row.keys(),wanted.keys())
+            for field in row:
+                if field in energy_fields:
+                    self.assert_energy_close(float(row[field]),float(wanted[field]))
+                else:
+                    self.assertEqual(row[field],wanted[field],f'stage {stage}, field {field}')
+
+    def assert_energy_close(self,actual,expected):
+        if math.isnan(expected):
+            self.assertTrue(math.isnan(actual),f'{actual} != expected NaN')
+        else:
+            self.assertTrue(math.isfinite(actual) and math.isfinite(expected) and
+                            math.isclose(actual,expected,rel_tol=1e-13,abs_tol=1e-14),
+                            f'{actual} != {expected} within energy rounding tolerance')
+
+    def assert_energy_maps_match(self,actual_root,expected_root):
+        actual=[[float(x) for x in row.split()] for row in
+                (self.directory/(actual_root+'.ngb')).read_text().splitlines()]
+        expected=[[float(x) for x in row.split()] for row in
+                  (self.directory/(expected_root+'.ngb')).read_text().splitlines()]
+        self.assertEqual(len(actual),len(expected))
+        for y,(row,wanted) in enumerate(zip(actual,expected),1):
+            self.assertEqual(len(row),len(wanted))
+            for x,(value,target) in enumerate(zip(row,wanted),1):
+                with self.subTest(row=y,column=x):
+                    self.assert_energy_close(value,target)
+
+    def test_energy_comparison_rejects_material_differences(self):
+        # Accept rounding, but never hide changed counts, NaN mismatches,
+        # missing stages, or physically meaningful changes in diagnostics.
+        self.assert_energy_close(.08+5e-16,.08)
+        self.assert_energy_close(float('nan'),float('nan'))
+        for actual,expected in ((.080001,.08),(float('nan'),.08),
+                                (.08,float('nan')),(float('inf'),.08)):
+            with self.assertRaises(AssertionError):
+                self.assert_energy_close(actual,expected)
+        expected=[{'step':'1','energy':'.08','acceptance_rate':'.5'}]
+        self.assert_metrics_match([dict(expected[0],energy='.0800000000000005')],expected)
+        with self.assertRaises(AssertionError):
+            self.assert_metrics_match([],expected)
+        with self.assertRaises(AssertionError):
+            self.assert_metrics_match([dict(expected[0],acceptance_rate='.500000000000001')],expected)
+        with self.assertRaises(AssertionError):
+            self.assert_metrics_match([dict(expected[0],energy='.080001')],expected)
+
     def test_published_rng_vectors_and_integer_overflow_safety(self):
         # Random123 tests/kat_vectors: Philox4x32-10, zero/all-one/pi inputs.
         vectors=[([0]*4,[0]*2,['6627e8d5','e169c58d','bc57ac4c','9b00dbd8']),
@@ -211,15 +262,15 @@ class ParallelTests(unittest.TestCase):
             values.append(float(lines[0].split()[0]))
         self.assertTrue(all(after<=before+1e-14 for before,after in zip(values,values[1:])))
 
-    def test_cpu_thread_counts_and_target_host_replay_exactly(self):
+    def test_cpu_thread_counts_and_target_host_preserve_trajectory(self):
         self.run_model('reference','blocked',order='random')
         for backend,threads in (('cpu',1),('cpu',2),('cpu',4),('target-host',None)):
             root=f'{backend}-{threads}'
             self.run_model(root,backend,threads=threads,order='random')
-            for ext in ('.lat','.ngb'):
-                self.assertEqual((self.directory/(root+ext)).read_bytes(),
-                                 (self.directory/('reference'+ext)).read_bytes())
-            self.assertEqual(self.rows(root),self.rows('reference'))
+            self.assertEqual((self.directory/(root+'.lat')).read_bytes(),
+                             (self.directory/'reference.lat').read_bytes())
+            self.assert_energy_maps_match(root,'reference')
+            self.assert_metrics_match(self.rows(root),self.rows('reference'))
 
     def test_exact_restart_and_cpu_thread_count_change(self):
         for order in ('typewriter','random'):
@@ -295,6 +346,8 @@ class ParallelTests(unittest.TestCase):
         self.run_model('reference','blocked')
         self.run_model('gpu','gpu')
         self.assertEqual((self.directory/'gpu.lat').read_bytes(),(self.directory/'reference.lat').read_bytes())
+        self.assert_energy_maps_match('gpu','reference')
+        self.assert_metrics_match(self.rows('gpu'),self.rows('reference'))
         self.run_model('whole','gpu',steps=5)
         self.run_model('split','gpu',steps=2)
         self.run_model('split','gpu',steps=3,seed=None)
@@ -308,7 +361,8 @@ class ParallelTests(unittest.TestCase):
                       'reading mapped stencil','all mapped inputs match host'):
             self.assertIn('GPU check: '+stage,proc.stderr)
         self.assertEqual((self.directory/'reference.lat').read_bytes(),(self.directory/'checked.lat').read_bytes())
-        self.assertEqual(self.rows('reference'),self.rows('checked'))
+        self.assert_energy_maps_match('checked','reference')
+        self.assert_metrics_match(self.rows('checked'),self.rows('reference'))
 
 
 if __name__=='__main__':
