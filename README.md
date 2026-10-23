@@ -30,6 +30,15 @@ The default `serial` mode preserves the original update schedule. `blocked`
 provides a single-thread reference for `cpu` and `gpu` modes. GPU execution
 requires an offload-enabled compiler/runtime and refuses silent CPU fallback.
 
+Multicore CPU and NVIDIA GPU execution have been tested on the Aalto Triton
+Linux cluster, including the GPU regression suite, reference agreement, and
+checkpoint restarts. In an 800x800, four-color calculation with 100 temperature
+stages and 300 sweeps per stage, eight CPU cores took **8645.57 s** and one
+NVIDIA V100 took **115.04 s**: a **75.2x speedup** in reported annealing time.
+These are two individual runs, not a general scaling guarantee. Hardware,
+resource use, validation details, and benchmark limitations are recorded in
+[Cluster validation and benchmark](docs/parallelism.md#cluster-validation-and-benchmark).
+
 The executable is `build/colorplane` (`build/colorplane.exe` on Windows).
 Alternatively, `make -C src` retains the old `src/colorplane` location. Override
 the compiler with `--compiler /path/to/gfortran` or `FC=...`, and compiler flags

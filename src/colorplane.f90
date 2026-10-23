@@ -26,7 +26,7 @@ program colorplane
   type(basedata) :: lattice
   type(parallel_plan) :: plan
   integer(ip), allocatable, target :: spins(:,:)
-  integer(ip), pointer :: flat(:)
+  integer(ip), pointer, contiguous :: flat(:)
   integer :: device
   logical :: parallel_mode
   integer, allocatable :: sites(:)

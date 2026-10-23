@@ -50,7 +50,7 @@ Do not run a production calculation on a cluster login node.
 Load your site's NVIDIA HPC SDK module (its name/version is site-specific):
 
 ```sh
-python scripts/build.py --compiler nvfortran --openmp --flags="-O3" --output build/nvidia/colorplane
+python scripts/build.py --compiler nvfortran --openmp --flags="-O3 -tp=px -gpu=cc70" --output build/nvidia/colorplane
 OMP_TARGET_OFFLOAD=MANDATORY build/nvidia/colorplane --backend gpu --seed 123 < materials/inputs/q2-10-1.inp
 ```
 
@@ -58,7 +58,10 @@ The helper recognizes `nvfortran` and uses `-mp=gpu` and `-module`. If a wrapper
 hides the compiler name, pass `--compiler-kind nvhpc`. NVIDIA documents GPU
 plus CPU execution with `-mp=gpu`, targeting V100 and later GPUs. When building
 without the target GPU present, supply its architecture, for example
-`--flags="-O3 -gpu=cc80"` for an A100. Adapt this to the site's hardware and
+`--flags="-O3 -tp=px -gpu=cc80"` for an A100. The command above targets a V100
+(`cc70`). `-tp=px` selects portable CPU instructions: GPU programs still execute
+host code, and compiling for a newer login-node CPU can otherwise produce an
+illegal-instruction failure on older compute nodes. Adapt this to the site's hardware and
 supported compiler versions. See the
 [NVIDIA user guide](https://docs.nvidia.com/hpc-sdk/compilers/hpc-compilers-user-guide/index.html)
 and [compiler reference](https://docs.nvidia.com/hpc-sdk/compilers/hpc-compilers-ref-guide/).
@@ -104,6 +107,31 @@ separate diagnostic mode: host-fallback tests never count as GPU validation.
 simulation. Adapt its account/partition/resource flags and module setup before
 submitting. Supply executable and input paths. It creates a new working
 directory to protect results and does not submit itself.
+
+Use one node and **one Slurm task** (`--nodes=1 --ntasks=1`); OpenMP supplies
+parallelism within that process. Launch with `srun --ntasks=1` and keep the
+NVIDIA runtime module loaded in the job. Multiple tasks launch independent
+simulations that can contend for the GPU and the same output files. Run the
+GPU regression suite inside a GPU allocation as well; a login node without a
+GPU should fail with `No OpenMP GPU device`.
+
+If loading the NVIDIA module unloads GCC and linking reports
+`nvdd-Error-Required tool gcc was not found`, save GCC's executable directory
+before switching modules, then restore that directory to PATH. For example,
+on Triton's 2024.1 stack, in bash:
+
+```sh
+module load triton/2024.1-gcc gcc/12.3.0
+colorplane_gcc_bin=$(dirname "$(command -v gcc)")
+module load nvhpc/23.9
+export PATH="$colorplane_gcc_bin:$PATH"
+gcc --version
+nvfortran --version
+```
+
+Use the GCC installation matching the site's NVIDIA toolchain. Module names
+are site-specific; this workaround addresses a missing `gcc` executable during
+linking, not a requirement to compile Colorplane with two different compilers.
 
 ## Why the batches have no interacting spins
 
@@ -180,6 +208,44 @@ first upload. The benchmark also records complete process wall time.
 
 ## Validation and benchmarks
 
+For a short V100 check, build with portable host instructions and device line
+information, then run inside a one-task GPU allocation from a fresh directory:
+
+```sh
+python scripts/build.py --compiler nvfortran --openmp --flags="-O2 -tp=px -gpu=cc70,lineinfo -g -traceback" --output build/nvidia/colorplane
+# Set absolute paths before changing into a fresh output directory.
+exe=$(realpath build/nvidia/colorplane)
+input=$(realpath materials/inputs/gpu-smoke.inp)
+mkdir -p experiments
+work=$(mktemp -d experiments/gpu-smoke-XXXXXX)
+cd "$work"
+COLORPLANE_GPU_CHECKS=1 srun --ntasks=1 "$exe" --backend gpu --seed 123 < "$input"
+```
+
+An error reported at `cuStreamSynchronize` identifies a failed kernel, not the
+precise memory access. If it persists, repeat in another fresh directory with:
+
+```sh
+COLORPLANE_GPU_CHECKS=1 srun --ntasks=1 compute-sanitizer --tool memcheck --target-processes all --error-exitcode 99 "$exe" --backend gpu --seed 123 < "$input"
+```
+
+[NVIDIA Compute Sanitizer](https://docs.nvidia.com/compute-sanitizer/ComputeSanitizer/index.html)
+can report the invalid device access and source location. With
+`COLORPLANE_GPU_CHECKS=1`, three startup kernels read back the mapped lattice,
+site lists, and stencil into separate buffers for exact comparison with the
+host. Progress messages go to stderr and are flushed before each launch. A
+failure therefore distinguishes an input mapping problem from a later update
+failure. This check adds startup transfers and temporary host/device buffers;
+leave it unset for production timing.
+
+Upload, reset, update, energy measurement, and download all use explicit-shape
+array arguments and the same explicit map extents. The flattened lattice is
+contiguous throughout the host call chain, and input scalars passed to the
+device update routine use `VALUE`. This avoids mixing array-descriptor and
+raw-storage interfaces across persistent mappings. Host plan construction also
+checks that all stencil accesses lie within the padded lattice. These measures
+do not replace validation on a real GPU.
+
 ```sh
 python tests/test_reliability.py
 python tests/test_parallel.py
@@ -191,11 +257,18 @@ The parallel suite checks every interaction edge in several lattice colorings,
 published RNG known answers, an independent Python Monte Carlo implementation,
 final energy maps, CPU thread invariance, random color order, exact restarts,
 and rejection of GPU fallback. It also exercises target constructs on the host.
+Cross-backend lattice comparisons remain exact, as do stage numbers, site
+counts, temperatures, zero fractions, and acceptance rates. Energy diagnostics
+and local energy maps allow only double-precision rounding differences
+(`rel_tol=1e-13`, `abs_tol=1e-14`); missing interior regions must agree as NaN.
+This avoids treating differences in compiler-generated floating-point
+arithmetic as trajectory failures. Checkpoint replay within a backend is still
+checked exactly.
 The separate real-GPU test is skipped unless requested; then absence of a
 device is a failure. Run it **inside a GPU allocation** before production:
 
 ```sh
-OMP_TARGET_OFFLOAD=MANDATORY python tests/test_parallel.py --compiler nvfortran --flags="-O2 -Mbounds" --require-gpu
+OMP_TARGET_OFFLOAD=MANDATORY python tests/test_parallel.py --compiler nvfortran --flags="-O2 -tp=px -gpu=cc70,lineinfo -g -traceback" --require-gpu
 ```
 
 For GNU offload, replace compiler/flags with
@@ -210,9 +283,55 @@ agreement is recorded rather than assumed. Use enough work/repetitions to
 amortize startup and kernel launches. These example budgets are not convergence
 claims; optimization quality and finite-size/refinement studies still matter.
 
-Local validation used GNU Fortran on Windows. CPU and host-target tests passed;
-a 192x192, `a=0.05`, 30-sweep benchmark measured about 4x shorter annealing time
-with 8 CPU threads versus the blocked reference (two repeats, identical final
-states). No compatible NVIDIA GPU/compiler was available locally, so actual
-GPU execution and NVIDIA HPC SDK compilation remain unverified here. The
-real-GPU suite is the next validation gate.
+## Cluster validation and benchmark
+
+On 2026-10-21, the repository owner reported successful Linux validation on
+Aalto's Triton cluster with NVIDIA HPC SDK 23.9 and a V100 GPU. The complete
+parallel regression suite passed with `--require-gpu`, including real device
+execution, exact final-lattice agreement with the blocked reference, mapped
+input readback, and GPU checkpoint restarts. Energy diagnostics are compared
+with the rounding tolerances above. A separate short run under NVIDIA Compute
+Sanitizer reported zero errors. The subsequent full-size GPU calculation also
+completed successfully. GNU CPU and host-target tests additionally pass on
+the local Windows development machine; other GPU/compiler combinations remain
+unvalidated.
+
+The following results were supplied by the owner from the Colorplane summaries
+and Slurm job accounting for two Triton jobs on 2026-10-21. Both used four
+colors, an 800x800 lattice (640,000 sites), spacing 0.0125 (a 10x10 domain),
+100 temperature stages, 300 sweeps per stage, and cooling factor 0.950. The
+matching input is `materials/inputs/q4-10-4.inp`.
+
+| Measurement | Multicore CPU | NVIDIA GPU |
+| --- | --- | --- |
+| Slurm job ID | 21109480 | 21108034 |
+| Compute resources | 8 CPU cores | 1 V100, 2 reserved CPU cores |
+| Colorplane annealing wall time | 8645.57 s | 115.04 s |
+| Slurm job wall time | 2 h 24 min 9 s | 2 min |
+| CPU utilization time | 19 h 7 min 37 s | 1 min 57 s |
+| CPU efficiency against reserved cores | 99.52% | 48.75% |
+| Reported host memory used | 42.68 MB | 78.00 MB |
+| Average GPU utilization | Not applicable | 95% |
+| Maximum GPU memory used | Not applicable | 342 MB |
+
+The ratio of the reported annealing times is **75.2x** in favor of the V100;
+the ratio of full job wall times is **72.1x**. Use annealing wall time for the
+implementation comparison and job wall time for allocation planning. CPU
+utilization time is the sum across CPU cores, not elapsed time. The GPU job's
+48.75% CPU efficiency reflects its CPU allocation and does not measure GPU
+efficiency; GPU utilization was reported separately at 95%.
+
+These are single-run measurements at matching physical parameters and update
+budgets. The supplied excerpts do not establish matching seeds or final
+lattices, and do not include the CPU model, exact compiler flags, executable
+hashes, or repeated timings. The original job logs and output artifacts are
+not bundled here. Reference agreement is established by the regression tests,
+not by these timing excerpts. For reproducible speedup measurements, use the
+benchmark script with retained provenance, repeated runs, and final-state
+comparisons. Neither performance nor a low final energy establishes annealing
+convergence or a continuum result.
+
+An earlier local GNU/Windows benchmark at 192x192, `a=0.05`, and 30 sweeps
+measured about 4x shorter annealing time with eight CPU threads versus the
+blocked reference (two repeats, identical final states). This is a separate
+workload and machine, not the baseline for the Triton speedup.
