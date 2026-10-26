@@ -18,3 +18,8 @@ as seen in Fig. 5 of the paper.
 You can also use Octave or Matlab for displaying the lattices (and heat maps). For a lattice file "mylat.lat" issue
 L = load ("mylat.lat");
 imagesc (L)
+
+Python plotting tools are also available in ../scripts/plot_lattice.py and
+../scripts/plot_neighbors.py; see the main README for installation and usage.
+The probability script reads the simulator's .ngb output or recomputes it from
+the lattice using the same kernel, cutoff, and free-boundary convention.
