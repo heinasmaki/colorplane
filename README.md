@@ -128,6 +128,66 @@ schedules are rejected. GNU defaults to signed 16-bit spin storage; NVIDIA
 uses 32 bits to avoid an unsupported GPU conversion helper. Both support all
 2–255 colors. The build option `--spin-bits 32` also selects wider GNU storage.
 
+## Visualizing lattices and equal-color neighbors
+
+The optional Python plotting tools need NumPy and Matplotlib:
+
+```sh
+python -m pip install -r scripts/requirements-plot.txt
+python scripts/plot_lattice.py results/run.lat
+python scripts/plot_neighbors.py results/run.lat
+```
+
+These save `run.lattice.png` and `run.neighbors.png` alongside the input, with
+no display needed on a cluster. `--show` also opens an interactive window;
+`--output figures/run.pdf` saves a publication-friendly PDF instead. Parent
+output directories are created as needed. The lattice uses discrete colors,
+with row 1 at the bottom and columns increasing to the right. Spacing and the
+total color count are read from a sibling `.meta` file when available; legacy
+`.sum` spacing is also recognized. Otherwise the lattice axes show site counts.
+
+The neighbor plot contains a probability heatmap and a curve of the mean over
+progressively smaller central rectangles, obtained by excluding equal-width
+boundary layers on every side. It reads the sibling `.ngb` file if present.
+Without one, it computes probabilities from the lattice using zero-padded FFT
+convolutions, the model's distance-one interaction kernel, and the same
+`1e-14` weight cutoff. This takes one convolution per color present. For example,
+to plot a supplied paper lattice with its original spacing:
+
+```sh
+python scripts/plot_lattice.py materials/lattices/q4-10-4-res-res.lat --spacing .0125 --output figures/lattice.png
+python scripts/plot_neighbors.py materials/lattices/q4-10-4-res-res.lat --spacing .0125 --output figures/neighbors.png
+```
+
+Supply `--spacing` when no metadata or summary is available. The kernel is
+read from `.meta`, defaulting to `cosine`; `--kernel hat` overrides it for
+recomputation. Use `--recompute` to ignore an existing `.ngb`, especially if
+you edited the lattice or changed its spacing/kernel. `--map other.ngb` selects
+an explicit map and verifies its dimensions and probability range, but cannot
+verify that it belongs to this configuration. `--colors N` on the lattice
+script keeps absent colors in the palette and legend. Plots overwrite their
+selected output paths, so use a different `--output` to retain earlier figures.
+
+The default probability uses the **full interaction stencil denominator**, so
+it agrees with Colorplane's local energy and missing exterior neighbors lower
+boundary values. It measures equal colors near physical distance one, weighted
+by the smoothing kernel, rather than equality of adjacent grid cells. The
+optional `--normalization available` recomputes a conditional probability using
+only neighbor weights inside the domain. This removes that boundary loss from
+the denominator and does **not** equal the simulation's energy. Gray cells are
+undefined because no retained neighbor lies inside the domain. This option
+cannot be combined with `--map`.
+
+Probabilities use a fixed heatmap scale of 0..1 by default. `--vmax .1` reveals
+small spatial variations while marking saturation above the displayed range.
+`--data-output figures/probabilities.txt` also saves the displayed matrix.
+Recomputed FFT maps have floating-point rounding error near zero; they are not
+exact-zero certificates. The saved `.ngb` remains the simulator's direct map.
+
+Test the plotting tools separately with `python tests/test_visualization.py`.
+If `tests/test_reliability.py` has already built the Fortran energy probe, this
+also compares recomputed maps with Fortran for both supported kernels.
+
 ## Repeated runs and comparison experiments
 
 ```sh
